@@ -1,9 +1,11 @@
 """MCP server exposing Unreal Engine data systems to AI tools."""
 
+import json
 import logging
 import os
 from mcp.server.fastmcp import FastMCP
 from .tcp_client import UEConnection
+from .tools.datatables import register_datatable_tools
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -25,23 +27,13 @@ def get_status() -> str:
     """
     try:
         response = _connection.send_command("get_status")
-        return str(response.get("data", {}))
+        return json.dumps(response.get("data", {}), indent=2)
     except ConnectionError as e:
         return f"Not connected to Unreal Editor: {e}"
 
 
-@mcp.tool()
-def list_datatables(path_filter: str = "") -> str:
-    """List all DataTables in the Unreal project with their row struct types.
-
-    Args:
-        path_filter: Filter by content path prefix (e.g., '/Game/Data/Quests/')
-    """
-    try:
-        response = _connection.send_command("list_datatables", {"path_filter": path_filter})
-        return str(response.get("data", {}))
-    except ConnectionError as e:
-        return f"Not connected to Unreal Editor: {e}"
+# Register tool groups
+register_datatable_tools(mcp, _connection)
 
 
 def main():
