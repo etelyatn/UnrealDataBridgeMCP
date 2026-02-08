@@ -2,6 +2,7 @@
 
 #include "UDBCommandHandler.h"
 #include "Operations/UDBDataTableOps.h"
+#include "Operations/UDBGameplayTagOps.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Serialization/JsonWriter.h"
@@ -54,6 +55,22 @@ FUDBCommandResult FUDBCommandHandler::Execute(const FString& Command, const TSha
 	else if (Command == TEXT("import_datatable_json"))
 	{
 		return FUDBDataTableOps::ImportDatatableJson(Params);
+	}
+	else if (Command == TEXT("list_gameplay_tags"))
+	{
+		return FUDBGameplayTagOps::ListGameplayTags(Params);
+	}
+	else if (Command == TEXT("validate_gameplay_tag"))
+	{
+		return FUDBGameplayTagOps::ValidateGameplayTag(Params);
+	}
+	else if (Command == TEXT("register_gameplay_tag"))
+	{
+		return FUDBGameplayTagOps::RegisterGameplayTag(Params);
+	}
+	else if (Command == TEXT("register_gameplay_tags"))
+	{
+		return FUDBGameplayTagOps::RegisterGameplayTags(Params);
 	}
 
 	UE_LOG(LogUDBCommandHandler, Warning, TEXT("Unknown command: %s"), *Command);
