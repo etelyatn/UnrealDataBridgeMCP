@@ -1,13 +1,11 @@
 // Copyright Mavka Games. All Rights Reserved. https://www.mavka.games/
 
 #include "UDBCommandHandler.h"
-#include "UDBSerializer.h"
+#include "Operations/UDBDataTableOps.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Serialization/JsonWriter.h"
 #include "Serialization/JsonSerializer.h"
-#include "Engine/DataTable.h"
-#include "UObject/UObjectIterator.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogUDBCommandHandler, Log, All);
 
@@ -23,11 +21,23 @@ FUDBCommandResult FUDBCommandHandler::Execute(const FString& Command, const TSha
 	}
 	else if (Command == TEXT("list_datatables"))
 	{
-		return HandleListDatatables(Params);
+		return FUDBDataTableOps::ListDatatables(Params);
+	}
+	else if (Command == TEXT("get_datatable_schema"))
+	{
+		return FUDBDataTableOps::GetDatatableSchema(Params);
+	}
+	else if (Command == TEXT("query_datatable"))
+	{
+		return FUDBDataTableOps::QueryDatatable(Params);
 	}
 	else if (Command == TEXT("get_datatable_row"))
 	{
-		return HandleGetDatatableRow(Params);
+		return FUDBDataTableOps::GetDatatableRow(Params);
+	}
+	else if (Command == TEXT("get_struct_schema"))
+	{
+		return FUDBDataTableOps::GetStructSchema(Params);
 	}
 
 	UE_LOG(LogUDBCommandHandler, Warning, TEXT("Unknown command: %s"), *Command);
@@ -110,85 +120,5 @@ FUDBCommandResult FUDBCommandHandler::HandleGetStatus(const TSharedPtr<FJsonObje
 	TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
 	Data->SetStringField(TEXT("status"), TEXT("ready"));
 	Data->SetStringField(TEXT("editor"), TEXT("UnrealEditor"));
-	return Success(Data);
-}
-
-FUDBCommandResult FUDBCommandHandler::HandleListDatatables(const TSharedPtr<FJsonObject>& Params)
-{
-	TArray<TSharedPtr<FJsonValue>> DatatablesArray;
-
-	for (TObjectIterator<UDataTable> It; It; ++It)
-	{
-		UDataTable* DataTable = *It;
-		if (DataTable == nullptr)
-		{
-			continue;
-		}
-
-		TSharedRef<FJsonObject> EntryJson = MakeShared<FJsonObject>();
-		EntryJson->SetStringField(TEXT("name"), DataTable->GetName());
-		EntryJson->SetStringField(TEXT("path"), DataTable->GetPathName());
-
-		if (const UScriptStruct* RowStruct = DataTable->GetRowStruct())
-		{
-			EntryJson->SetStringField(TEXT("row_struct"), RowStruct->GetName());
-		}
-		else
-		{
-			EntryJson->SetStringField(TEXT("row_struct"), TEXT("None"));
-		}
-
-		EntryJson->SetNumberField(TEXT("row_count"), DataTable->GetRowMap().Num());
-
-		DatatablesArray.Add(MakeShared<FJsonValueObject>(EntryJson));
-	}
-
-	TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
-	Data->SetArrayField(TEXT("datatables"), DatatablesArray);
-
-	return Success(Data);
-}
-
-FUDBCommandResult FUDBCommandHandler::HandleGetDatatableRow(const TSharedPtr<FJsonObject>& Params)
-{
-	FString TablePath;
-	FString RowName;
-
-	bool bHasParams = Params.IsValid()
-		&& Params->TryGetStringField(TEXT("table_path"), TablePath)
-		&& Params->TryGetStringField(TEXT("row_name"), RowName);
-
-	if (!bHasParams)
-	{
-		return Error(
-			UDBErrorCodes::InvalidField,
-			TEXT("Missing required params: table_path and row_name")
-		);
-	}
-
-	UDataTable* DataTable = LoadObject<UDataTable>(nullptr, *TablePath);
-	if (DataTable == nullptr)
-	{
-		return Error(
-			UDBErrorCodes::TableNotFound,
-			FString::Printf(TEXT("DataTable not found: %s"), *TablePath)
-		);
-	}
-
-	const void* RowData = DataTable->FindRowUnchecked(FName(*RowName));
-	if (RowData == nullptr)
-	{
-		return Error(
-			UDBErrorCodes::RowNotFound,
-			FString::Printf(TEXT("Row not found: %s"), *RowName)
-		);
-	}
-
-	TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
-	Data->SetStringField(TEXT("table_path"), TablePath);
-	Data->SetStringField(TEXT("row_name"), RowName);
-	Data->SetStringField(TEXT("row_struct"), DataTable->GetRowStruct()->GetName());
-	Data->SetObjectField(TEXT("row_data"), FUDBSerializer::StructToJson(DataTable->GetRowStruct(), RowData));
-
 	return Success(Data);
 }

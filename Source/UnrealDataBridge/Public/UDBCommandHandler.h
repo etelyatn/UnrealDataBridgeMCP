@@ -52,6 +52,4 @@ private:
 	// Command implementations
 	FUDBCommandResult HandlePing(const TSharedPtr<FJsonObject>& Params);
 	FUDBCommandResult HandleGetStatus(const TSharedPtr<FJsonObject>& Params);
-	FUDBCommandResult HandleListDatatables(const TSharedPtr<FJsonObject>& Params);
-	FUDBCommandResult HandleGetDatatableRow(const TSharedPtr<FJsonObject>& Params);
 };
