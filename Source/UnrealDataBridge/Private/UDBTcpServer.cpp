@@ -9,6 +9,8 @@
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
+#include "Engine/DataTable.h"
+#include "UObject/UObjectIterator.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogUDBTcpServer, Log, All);
 
@@ -185,6 +187,47 @@ void FUDBTcpServer::ProcessClientData()
 
 			TSharedRef<FJsonObject> DataJson = MakeShared<FJsonObject>();
 			DataJson->SetStringField(TEXT("message"), TEXT("pong"));
+			ResponseJson->SetObjectField(TEXT("data"), DataJson);
+
+			TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+				TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&ResponseString);
+			FJsonSerializer::Serialize(ResponseJson, Writer);
+		}
+		else if (Command == TEXT("list_datatables"))
+		{
+			TArray<TSharedPtr<FJsonValue>> DatatablesArray;
+
+			for (TObjectIterator<UDataTable> It; It; ++It)
+			{
+				UDataTable* DataTable = *It;
+				if (DataTable == nullptr)
+				{
+					continue;
+				}
+
+				TSharedRef<FJsonObject> EntryJson = MakeShared<FJsonObject>();
+				EntryJson->SetStringField(TEXT("name"), DataTable->GetName());
+				EntryJson->SetStringField(TEXT("path"), DataTable->GetPathName());
+
+				if (const UScriptStruct* RowStruct = DataTable->GetRowStruct())
+				{
+					EntryJson->SetStringField(TEXT("row_struct"), RowStruct->GetName());
+				}
+				else
+				{
+					EntryJson->SetStringField(TEXT("row_struct"), TEXT("None"));
+				}
+
+				EntryJson->SetNumberField(TEXT("row_count"), DataTable->GetRowMap().Num());
+
+				DatatablesArray.Add(MakeShared<FJsonValueObject>(EntryJson));
+			}
+
+			TSharedRef<FJsonObject> DataJson = MakeShared<FJsonObject>();
+			DataJson->SetArrayField(TEXT("datatables"), DatatablesArray);
+
+			TSharedRef<FJsonObject> ResponseJson = MakeShared<FJsonObject>();
+			ResponseJson->SetBoolField(TEXT("success"), true);
 			ResponseJson->SetObjectField(TEXT("data"), DataJson);
 
 			TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
