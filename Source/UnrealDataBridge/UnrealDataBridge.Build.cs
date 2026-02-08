@@ -15,6 +15,7 @@ public class UnrealDataBridge : ModuleRules
 
 		PrivateDependencyModuleNames.AddRange(new string[]
 		{
+			"DeveloperSettings",
 			"Sockets",
 			"Networking",
 			"Json",

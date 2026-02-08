@@ -1,6 +1,7 @@
 // Copyright Mavka Games. All Rights Reserved. https://www.mavka.games/
 
 #include "UnrealDataBridgeModule.h"
+#include "UDBSettings.h"
 #include "UDBTcpServer.h"
 
 #define LOCTEXT_NAMESPACE "FUnrealDataBridgeModule"
@@ -11,14 +12,22 @@ void FUnrealDataBridgeModule::StartupModule()
 {
 	UE_LOG(LogUnrealDataBridge, Log, TEXT("UnrealDataBridge module starting up"));
 
-	TcpServer = MakeUnique<FUDBTcpServer>();
-	if (TcpServer->Start(8742))
+	const UUDBSettings* Settings = UUDBSettings::Get();
+	if (!Settings->bAutoStart)
 	{
-		UE_LOG(LogUnrealDataBridge, Log, TEXT("UnrealDataBridge TCP server listening on 127.0.0.1:8742"));
+		UE_LOG(LogUnrealDataBridge, Log, TEXT("UnrealDataBridge auto-start disabled in settings"));
+		return;
+	}
+
+	const int32 Port = Settings->Port;
+	TcpServer = MakeUnique<FUDBTcpServer>();
+	if (TcpServer->Start(Port))
+	{
+		UE_LOG(LogUnrealDataBridge, Log, TEXT("UnrealDataBridge TCP server listening on 127.0.0.1:%d"), Port);
 	}
 	else
 	{
-		UE_LOG(LogUnrealDataBridge, Error, TEXT("Failed to start UnrealDataBridge TCP server"));
+		UE_LOG(LogUnrealDataBridge, Error, TEXT("Failed to start UnrealDataBridge TCP server on port %d"), Port);
 	}
 }
 
