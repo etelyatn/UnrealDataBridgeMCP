@@ -1,4 +1,4 @@
-"""MCP tools for DataTable read operations."""
+"""MCP tools for DataTable read and write operations."""
 
 import json
 import logging
@@ -155,5 +155,112 @@ def register_datatable_tools(mcp, connection: UEConnection):
                 "include_subtypes": include_subtypes,
             })
             return json.dumps(response.get("data", {}), indent=2)
+        except ConnectionError as e:
+            return f"Error: {e}"
+
+    @mcp.tool()
+    def add_datatable_row(table_path: str, row_name: str, row_data: str) -> str:
+        """Add a new row to a DataTable.
+
+        Use get_datatable_schema first to understand the expected row structure.
+        For TInstancedStruct fields, include a '_struct_type' key with the struct type name.
+
+        Note: This marks the DataTable as dirty (unsaved). Use Unreal's File > Save All to persist.
+
+        Args:
+            table_path: Full asset path to the DataTable.
+            row_name: Unique name/key for the new row (e.g., 'Quest_NewQuest_01').
+            row_data: JSON string with row field values. Example: '{"QuestName": "Test", "Difficulty": 3}'
+
+        Returns:
+            JSON with success status, row_name, and any warnings.
+        """
+        try:
+            data = json.loads(row_data)
+            response = connection.send_command("add_datatable_row", {
+                "table_path": table_path,
+                "row_name": row_name,
+                "row_data": data,
+            })
+            return json.dumps(response.get("data", {}), indent=2)
+        except json.JSONDecodeError as e:
+            return f"Error: Invalid JSON in row_data: {e}"
+        except ConnectionError as e:
+            return f"Error: {e}"
+
+    @mcp.tool()
+    def update_datatable_row(table_path: str, row_name: str, row_data: str) -> str:
+        """Update an existing row in a DataTable with partial data.
+
+        Only fields present in row_data are modified; other fields remain unchanged.
+        Use get_datatable_row first to see current values.
+
+        Args:
+            table_path: Full asset path to the DataTable.
+            row_name: Name of the existing row to update.
+            row_data: JSON string with fields to update. Only specified fields are changed.
+
+        Returns:
+            JSON with success status, modified_fields list, and any warnings.
+        """
+        try:
+            data = json.loads(row_data)
+            response = connection.send_command("update_datatable_row", {
+                "table_path": table_path,
+                "row_name": row_name,
+                "row_data": data,
+            })
+            return json.dumps(response.get("data", {}), indent=2)
+        except json.JSONDecodeError as e:
+            return f"Error: Invalid JSON in row_data: {e}"
+        except ConnectionError as e:
+            return f"Error: {e}"
+
+    @mcp.tool()
+    def delete_datatable_row(table_path: str, row_name: str) -> str:
+        """Delete a row from a DataTable.
+
+        Args:
+            table_path: Full asset path to the DataTable.
+            row_name: Name of the row to delete.
+
+        Returns:
+            JSON with success status and deleted row_name.
+        """
+        try:
+            response = connection.send_command("delete_datatable_row", {
+                "table_path": table_path,
+                "row_name": row_name,
+            })
+            return json.dumps(response.get("data", {}), indent=2)
+        except ConnectionError as e:
+            return f"Error: {e}"
+
+    @mcp.tool()
+    def import_datatable_json(table_path: str, rows: str, mode: str = "create", dry_run: bool = False) -> str:
+        """Bulk import rows into a DataTable.
+
+        Args:
+            table_path: Full asset path to the DataTable.
+            rows: JSON string with array of objects, each containing 'row_name' and 'row_data'.
+                  Example: '[{"row_name": "Row1", "row_data": {"Field1": "value"}}]'
+            mode: Import mode - 'create' (skip existing), 'upsert' (create or update),
+                  or 'replace' (clear table first). Default: 'create'.
+            dry_run: If true, validate without writing. Default: false.
+
+        Returns:
+            JSON with counts of created, updated, skipped rows, plus any errors/warnings.
+        """
+        try:
+            rows_data = json.loads(rows)
+            response = connection.send_command("import_datatable_json", {
+                "table_path": table_path,
+                "rows": rows_data,
+                "mode": mode,
+                "dry_run": dry_run,
+            })
+            return json.dumps(response.get("data", {}), indent=2)
+        except json.JSONDecodeError as e:
+            return f"Error: Invalid JSON in rows: {e}"
         except ConnectionError as e:
             return f"Error: {e}"
