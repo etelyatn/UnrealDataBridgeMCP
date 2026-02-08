@@ -3,6 +3,7 @@
 #include "UDBCommandHandler.h"
 #include "Operations/UDBDataTableOps.h"
 #include "Operations/UDBGameplayTagOps.h"
+#include "Operations/UDBDataAssetOps.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Serialization/JsonWriter.h"
@@ -71,6 +72,18 @@ FUDBCommandResult FUDBCommandHandler::Execute(const FString& Command, const TSha
 	else if (Command == TEXT("register_gameplay_tags"))
 	{
 		return FUDBGameplayTagOps::RegisterGameplayTags(Params);
+	}
+	else if (Command == TEXT("list_data_assets"))
+	{
+		return FUDBDataAssetOps::ListDataAssets(Params);
+	}
+	else if (Command == TEXT("get_data_asset"))
+	{
+		return FUDBDataAssetOps::GetDataAsset(Params);
+	}
+	else if (Command == TEXT("update_data_asset"))
+	{
+		return FUDBDataAssetOps::UpdateDataAsset(Params);
 	}
 
 	UE_LOG(LogUDBCommandHandler, Warning, TEXT("Unknown command: %s"), *Command);
