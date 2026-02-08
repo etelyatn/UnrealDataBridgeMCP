@@ -1,0 +1,35 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "0.1.0",
+	"FriendlyName": "Unreal Data Bridge",
+	"Description": "TCP server exposing DataTables, GameplayTags, DataAssets, and StringTables to AI tools via MCP",
+	"Category": "Editor",
+	"CreatedBy": "",
+	"CreatedByURL": "",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"EnabledByDefault": true,
+	"CanContainContent": false,
+	"IsBetaVersion": true,
+	"Installed": false,
+	"Plugins": [
+		{
+			"Name": "StructUtils",
+			"Enabled": true
+		}
+	],
+	"Modules": [
+		{
+			"Name": "UnrealDataBridge",
+			"Type": "Editor",
+			"LoadingPhase": "PostEngineInit"
+		},
+		{
+			"Name": "UnrealDataBridgeTests",
+			"Type": "DeveloperTool",
+			"LoadingPhase": "Default"
+		}
+	]
+}
