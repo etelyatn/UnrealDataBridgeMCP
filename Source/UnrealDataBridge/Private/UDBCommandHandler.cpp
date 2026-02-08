@@ -4,6 +4,7 @@
 #include "Operations/UDBDataTableOps.h"
 #include "Operations/UDBGameplayTagOps.h"
 #include "Operations/UDBDataAssetOps.h"
+#include "Operations/UDBLocalizationOps.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Serialization/JsonWriter.h"
@@ -84,6 +85,18 @@ FUDBCommandResult FUDBCommandHandler::Execute(const FString& Command, const TSha
 	else if (Command == TEXT("update_data_asset"))
 	{
 		return FUDBDataAssetOps::UpdateDataAsset(Params);
+	}
+	else if (Command == TEXT("list_string_tables"))
+	{
+		return FUDBLocalizationOps::ListStringTables(Params);
+	}
+	else if (Command == TEXT("get_translations"))
+	{
+		return FUDBLocalizationOps::GetTranslations(Params);
+	}
+	else if (Command == TEXT("set_translation"))
+	{
+		return FUDBLocalizationOps::SetTranslation(Params);
 	}
 
 	UE_LOG(LogUDBCommandHandler, Warning, TEXT("Unknown command: %s"), *Command);
