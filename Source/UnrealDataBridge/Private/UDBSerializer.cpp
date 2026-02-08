@@ -271,6 +271,325 @@ TSharedPtr<FJsonValue> FUDBSerializer::PropertyToJson(const FProperty* Property,
 	return nullptr;
 }
 
+bool FUDBSerializer::JsonToStruct(const TSharedPtr<FJsonObject>& JsonObject, const UStruct* StructType, void* StructData, TArray<FString>& OutWarnings)
+{
+	if (!JsonObject.IsValid() || StructType == nullptr || StructData == nullptr)
+	{
+		return false;
+	}
+
+	for (const auto& Pair : JsonObject->Values)
+	{
+		const FString& FieldName = Pair.Key;
+		const TSharedPtr<FJsonValue>& JsonValue = Pair.Value;
+
+		// Skip internal metadata fields
+		if (FieldName.StartsWith(TEXT("_")))
+		{
+			continue;
+		}
+
+		// Find the matching property
+		const FProperty* Property = StructType->FindPropertyByName(FName(*FieldName));
+		if (Property == nullptr)
+		{
+			OutWarnings.Add(FString::Printf(TEXT("Unknown field '%s' in struct '%s'"), *FieldName, *StructType->GetName()));
+			continue;
+		}
+
+		void* ValuePtr = Property->ContainerPtrToValuePtr<void>(StructData);
+		if (!JsonToProperty(JsonValue, Property, ValuePtr, OutWarnings))
+		{
+			OutWarnings.Add(FString::Printf(TEXT("Failed to deserialize field '%s'"), *FieldName));
+		}
+	}
+
+	return true;
+}
+
+bool FUDBSerializer::JsonToProperty(const TSharedPtr<FJsonValue>& JsonValue, const FProperty* Property, void* ValuePtr, TArray<FString>& OutWarnings)
+{
+	if (!JsonValue.IsValid() || Property == nullptr || ValuePtr == nullptr)
+	{
+		return false;
+	}
+
+	// Handle null JSON values
+	if (JsonValue->IsNull())
+	{
+		// For object properties, set to nullptr
+		if (const FObjectProperty* ObjProp = CastField<FObjectProperty>(Property))
+		{
+			ObjProp->SetObjectPropertyValue(ValuePtr, nullptr);
+			return true;
+		}
+		return false;
+	}
+
+	// Bool
+	if (const FBoolProperty* BoolProp = CastField<FBoolProperty>(Property))
+	{
+		BoolProp->SetPropertyValue(ValuePtr, JsonValue->AsBool());
+		return true;
+	}
+
+	// Int
+	if (const FIntProperty* IntProp = CastField<FIntProperty>(Property))
+	{
+		IntProp->SetPropertyValue(ValuePtr, static_cast<int32>(JsonValue->AsNumber()));
+		return true;
+	}
+
+	// Int64
+	if (const FInt64Property* Int64Prop = CastField<FInt64Property>(Property))
+	{
+		Int64Prop->SetPropertyValue(ValuePtr, static_cast<int64>(JsonValue->AsNumber()));
+		return true;
+	}
+
+	// Float
+	if (const FFloatProperty* FloatProp = CastField<FFloatProperty>(Property))
+	{
+		FloatProp->SetPropertyValue(ValuePtr, static_cast<float>(JsonValue->AsNumber()));
+		return true;
+	}
+
+	// Double
+	if (const FDoubleProperty* DoubleProp = CastField<FDoubleProperty>(Property))
+	{
+		DoubleProp->SetPropertyValue(ValuePtr, JsonValue->AsNumber());
+		return true;
+	}
+
+	// FString
+	if (const FStrProperty* StrProp = CastField<FStrProperty>(Property))
+	{
+		StrProp->SetPropertyValue(ValuePtr, JsonValue->AsString());
+		return true;
+	}
+
+	// FName
+	if (const FNameProperty* NameProp = CastField<FNameProperty>(Property))
+	{
+		NameProp->SetPropertyValue(ValuePtr, FName(*JsonValue->AsString()));
+		return true;
+	}
+
+	// FText
+	if (const FTextProperty* TextProp = CastField<FTextProperty>(Property))
+	{
+		TextProp->SetPropertyValue(ValuePtr, FText::FromString(JsonValue->AsString()));
+		return true;
+	}
+
+	// Enum property (enum class)
+	if (const FEnumProperty* EnumProp = CastField<FEnumProperty>(Property))
+	{
+		const UEnum* Enum = EnumProp->GetEnum();
+		const FString EnumString = JsonValue->AsString();
+		int64 EnumValue = Enum->GetValueByNameString(EnumString);
+		if (EnumValue == INDEX_NONE)
+		{
+			OutWarnings.Add(FString::Printf(TEXT("Unknown enum value '%s' for enum '%s'"), *EnumString, *Enum->GetName()));
+			return false;
+		}
+		FNumericProperty* UnderlyingProp = EnumProp->GetUnderlyingProperty();
+		UnderlyingProp->SetIntPropertyValue(ValuePtr, EnumValue);
+		return true;
+	}
+
+	// Byte property with enum (old-style TEnumAsByte)
+	if (const FByteProperty* ByteProp = CastField<FByteProperty>(Property))
+	{
+		if (const UEnum* Enum = ByteProp->GetIntPropertyEnum())
+		{
+			const FString EnumString = JsonValue->AsString();
+			int64 EnumValue = Enum->GetValueByNameString(EnumString);
+			if (EnumValue == INDEX_NONE)
+			{
+				OutWarnings.Add(FString::Printf(TEXT("Unknown enum value '%s' for enum '%s'"), *EnumString, *Enum->GetName()));
+				return false;
+			}
+			ByteProp->SetPropertyValue(ValuePtr, static_cast<uint8>(EnumValue));
+			return true;
+		}
+		ByteProp->SetPropertyValue(ValuePtr, static_cast<uint8>(JsonValue->AsNumber()));
+		return true;
+	}
+
+	// Struct property
+	if (const FStructProperty* StructProp = CastField<FStructProperty>(Property))
+	{
+		// FGameplayTag - deserialize from tag string
+		if (StructProp->Struct == FGameplayTag::StaticStruct())
+		{
+			const FString TagString = JsonValue->AsString();
+			FGameplayTag* Tag = static_cast<FGameplayTag*>(ValuePtr);
+			*Tag = FGameplayTag::RequestGameplayTag(FName(*TagString), false);
+			return true;
+		}
+
+		// FGameplayTagContainer - deserialize from array of tag strings
+		if (StructProp->Struct == FGameplayTagContainer::StaticStruct())
+		{
+			const TArray<TSharedPtr<FJsonValue>>* JsonArray = nullptr;
+			if (!JsonValue->TryGetArray(JsonArray) || JsonArray == nullptr)
+			{
+				OutWarnings.Add(TEXT("Expected array for FGameplayTagContainer"));
+				return false;
+			}
+			FGameplayTagContainer* Container = static_cast<FGameplayTagContainer*>(ValuePtr);
+			Container->Reset();
+			for (const TSharedPtr<FJsonValue>& Element : *JsonArray)
+			{
+				if (Element.IsValid())
+				{
+					FGameplayTag Tag = FGameplayTag::RequestGameplayTag(FName(*Element->AsString()), false);
+					Container->AddTag(Tag);
+				}
+			}
+			return true;
+		}
+
+		// FInstancedStruct - deserialize with _struct_type discriminator
+		if (StructProp->Struct == FInstancedStruct::StaticStruct())
+		{
+			const TSharedPtr<FJsonObject>* InnerObj = nullptr;
+			if (!JsonValue->TryGetObject(InnerObj) || InnerObj == nullptr || !(*InnerObj).IsValid())
+			{
+				OutWarnings.Add(TEXT("Expected object for FInstancedStruct"));
+				return false;
+			}
+
+			FString StructTypeName;
+			if (!(*InnerObj)->TryGetStringField(TEXT("_struct_type"), StructTypeName) || StructTypeName.IsEmpty())
+			{
+				OutWarnings.Add(TEXT("FInstancedStruct missing '_struct_type' field"));
+				return false;
+			}
+
+			// Find the UScriptStruct by name
+			UScriptStruct* FoundStruct = nullptr;
+			for (TObjectIterator<UScriptStruct> It; It; ++It)
+			{
+				if (It->GetName() == StructTypeName)
+				{
+					FoundStruct = *It;
+					break;
+				}
+			}
+
+			if (FoundStruct == nullptr)
+			{
+				OutWarnings.Add(FString::Printf(TEXT("Could not find struct type '%s' for FInstancedStruct"), *StructTypeName));
+				return false;
+			}
+
+			FInstancedStruct* Instance = static_cast<FInstancedStruct*>(ValuePtr);
+			Instance->InitializeAs(FoundStruct);
+			return JsonToStruct(*InnerObj, FoundStruct, Instance->GetMutableMemory(), OutWarnings);
+		}
+
+		// FSoftObjectPath - deserialize from string path
+		if (StructProp->Struct == TBaseStructure<FSoftObjectPath>::Get())
+		{
+			FSoftObjectPath* SoftPath = static_cast<FSoftObjectPath*>(ValuePtr);
+			SoftPath->SetPath(JsonValue->AsString());
+			return true;
+		}
+
+		// Default: recursive struct deserialization from JSON object
+		const TSharedPtr<FJsonObject>* NestedObj = nullptr;
+		if (!JsonValue->TryGetObject(NestedObj) || NestedObj == nullptr || !(*NestedObj).IsValid())
+		{
+			OutWarnings.Add(FString::Printf(TEXT("Expected object for struct property '%s'"), *Property->GetName()));
+			return false;
+		}
+		return JsonToStruct(*NestedObj, StructProp->Struct, ValuePtr, OutWarnings);
+	}
+
+	// Array property
+	if (const FArrayProperty* ArrayProp = CastField<FArrayProperty>(Property))
+	{
+		const TArray<TSharedPtr<FJsonValue>>* JsonArray = nullptr;
+		if (!JsonValue->TryGetArray(JsonArray) || JsonArray == nullptr)
+		{
+			OutWarnings.Add(FString::Printf(TEXT("Expected array for property '%s'"), *Property->GetName()));
+			return false;
+		}
+
+		FScriptArrayHelper ArrayHelper(ArrayProp, ValuePtr);
+		ArrayHelper.Resize(JsonArray->Num());
+		for (int32 Index = 0; Index < JsonArray->Num(); ++Index)
+		{
+			JsonToProperty((*JsonArray)[Index], ArrayProp->Inner, ArrayHelper.GetRawPtr(Index), OutWarnings);
+		}
+		return true;
+	}
+
+	// Map property
+	if (const FMapProperty* MapProp = CastField<FMapProperty>(Property))
+	{
+		const TSharedPtr<FJsonObject>* MapObj = nullptr;
+		if (!JsonValue->TryGetObject(MapObj) || MapObj == nullptr || !(*MapObj).IsValid())
+		{
+			OutWarnings.Add(FString::Printf(TEXT("Expected object for map property '%s'"), *Property->GetName()));
+			return false;
+		}
+
+		FScriptMapHelper MapHelper(MapProp, ValuePtr);
+		MapHelper.EmptyValues();
+
+		for (const auto& MapPair : (*MapObj)->Values)
+		{
+			int32 NewIndex = MapHelper.AddDefaultValue_Invalid_NeedsRehash();
+
+			// Import key from string
+			void* KeyPtr = MapHelper.GetKeyPtr(NewIndex);
+			MapProp->KeyProp->ImportText_Direct(*MapPair.Key, KeyPtr, nullptr, PPF_None);
+
+			// Import value
+			void* MapValuePtr = MapHelper.GetValuePtr(NewIndex);
+			JsonToProperty(MapPair.Value, MapProp->ValueProp, MapValuePtr, OutWarnings);
+		}
+
+		MapHelper.Rehash();
+		return true;
+	}
+
+	// Soft object property
+	if (const FSoftObjectProperty* SoftObjProp = CastField<FSoftObjectProperty>(Property))
+	{
+		FSoftObjectPtr* SoftPtr = reinterpret_cast<FSoftObjectPtr*>(ValuePtr);
+		*SoftPtr = FSoftObjectPath(JsonValue->AsString());
+		return true;
+	}
+
+	// Object property (hard reference)
+	if (const FObjectProperty* ObjProp = CastField<FObjectProperty>(Property))
+	{
+		const FString ObjectPath = JsonValue->AsString();
+		if (ObjectPath.IsEmpty())
+		{
+			ObjProp->SetObjectPropertyValue(ValuePtr, nullptr);
+			return true;
+		}
+
+		UObject* LoadedObject = StaticLoadObject(ObjProp->PropertyClass, nullptr, *ObjectPath);
+		if (LoadedObject == nullptr)
+		{
+			OutWarnings.Add(FString::Printf(TEXT("Failed to load object '%s' for property '%s'"), *ObjectPath, *Property->GetName()));
+			return false;
+		}
+		ObjProp->SetObjectPropertyValue(ValuePtr, LoadedObject);
+		return true;
+	}
+
+	UE_LOG(LogUDBSerializer, Warning, TEXT("Unhandled property type for deserialization: %s (%s)"),
+		*Property->GetName(), *Property->GetClass()->GetName());
+	return false;
+}
+
 TSharedPtr<FJsonObject> FUDBSerializer::GetStructSchema(const UStruct* StructType, bool bIncludeInherited)
 {
 	TSharedPtr<FJsonObject> SchemaObj = MakeShared<FJsonObject>();

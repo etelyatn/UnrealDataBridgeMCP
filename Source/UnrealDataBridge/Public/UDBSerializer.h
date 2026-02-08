@@ -14,6 +14,12 @@ public:
 	/** Serialize a single FProperty value to a JSON value */
 	static TSharedPtr<FJsonValue> PropertyToJson(const FProperty* Property, const void* ValuePtr);
 
+	/** Deserialize JSON into a UStruct instance. Returns true on success. */
+	static bool JsonToStruct(const TSharedPtr<FJsonObject>& JsonObject, const UStruct* StructType, void* StructData, TArray<FString>& OutWarnings);
+
+	/** Deserialize a JSON value into a single FProperty. Returns true on success. */
+	static bool JsonToProperty(const TSharedPtr<FJsonValue>& JsonValue, const FProperty* Property, void* ValuePtr, TArray<FString>& OutWarnings);
+
 	/** Get schema for a UStruct (field names, types, enum values, nested schemas) */
 	static TSharedPtr<FJsonObject> GetStructSchema(const UStruct* StructType, bool bIncludeInherited = true);
 
