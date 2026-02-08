@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "Containers/Ticker.h"
 #include "Interfaces/IPv4/IPv4Endpoint.h"
+#include "UDBCommandHandler.h"
 
 class FSocket;
 class FTcpListener;
@@ -23,9 +24,13 @@ private:
 	bool HandleConnectionAccepted(FSocket* ClientSocket, const FIPv4Endpoint& ClientEndpoint);
 	void ProcessClientData();
 
+	/** Send a JSON response string followed by newline delimiter */
+	void SendResponse(const FString& ResponseString);
+
 	TUniquePtr<FTcpListener> Listener;
 	FSocket* ClientSocket = nullptr;
 	FString ReceiveBuffer;
 	FThreadSafeBool bRunning = false;
 	FTSTicker::FDelegateHandle TickDelegateHandle;
+	FUDBCommandHandler CommandHandler;
 };

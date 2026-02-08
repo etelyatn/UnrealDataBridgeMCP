@@ -1,0 +1,57 @@
+// Copyright Mavka Games. All Rights Reserved. https://www.mavka.games/
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Dom/JsonObject.h"
+
+/** Error codes matching the PRD specification */
+namespace UDBErrorCodes
+{
+	static const FString TableNotFound = TEXT("TABLE_NOT_FOUND");
+	static const FString RowNotFound = TEXT("ROW_NOT_FOUND");
+	static const FString AssetNotFound = TEXT("ASSET_NOT_FOUND");
+	static const FString RowAlreadyExists = TEXT("ROW_ALREADY_EXISTS");
+	static const FString InvalidField = TEXT("INVALID_FIELD");
+	static const FString InvalidValue = TEXT("INVALID_VALUE");
+	static const FString InvalidStructType = TEXT("INVALID_STRUCT_TYPE");
+	static const FString InvalidTag = TEXT("INVALID_TAG");
+	static const FString SerializationError = TEXT("SERIALIZATION_ERROR");
+	static const FString EditorNotReady = TEXT("EDITOR_NOT_READY");
+	static const FString UnknownCommand = TEXT("UNKNOWN_COMMAND");
+}
+
+/** Result of a command execution */
+struct UNREALDATABRIDGE_API FUDBCommandResult
+{
+	bool bSuccess = false;
+	TSharedPtr<FJsonObject> Data;
+	FString ErrorCode;
+	FString ErrorMessage;
+	TSharedPtr<FJsonObject> ErrorDetails;
+	TArray<FString> Warnings;
+};
+
+/** Handles routing and execution of TCP commands */
+class UNREALDATABRIDGE_API FUDBCommandHandler
+{
+public:
+	/** Execute a command and return the result */
+	FUDBCommandResult Execute(const FString& Command, const TSharedPtr<FJsonObject>& Params);
+
+	/** Serialize a result to the response envelope JSON string */
+	static FString ResultToJson(const FUDBCommandResult& Result, double TimingMs);
+
+	/** Helper to build a success result */
+	static FUDBCommandResult Success(TSharedPtr<FJsonObject> Data);
+
+	/** Helper to build an error result */
+	static FUDBCommandResult Error(const FString& Code, const FString& Message, TSharedPtr<FJsonObject> Details = nullptr);
+
+private:
+	// Command implementations
+	FUDBCommandResult HandlePing(const TSharedPtr<FJsonObject>& Params);
+	FUDBCommandResult HandleGetStatus(const TSharedPtr<FJsonObject>& Params);
+	FUDBCommandResult HandleListDatatables(const TSharedPtr<FJsonObject>& Params);
+	FUDBCommandResult HandleGetDatatableRow(const TSharedPtr<FJsonObject>& Params);
+};

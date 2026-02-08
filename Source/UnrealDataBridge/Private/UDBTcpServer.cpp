@@ -1,6 +1,7 @@
 // Copyright Mavka Games. All Rights Reserved. https://www.mavka.games/
 
 #include "UDBTcpServer.h"
+#include "UDBCommandHandler.h"
 #include "Common/TcpListener.h"
 #include "SocketSubsystem.h"
 #include "Sockets.h"
@@ -8,10 +9,6 @@
 #include "Dom/JsonObject.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
-#include "Serialization/JsonWriter.h"
-#include "Engine/DataTable.h"
-#include "UObject/UObjectIterator.h"
-#include "UDBSerializer.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogUDBTcpServer, Log, All);
 
@@ -168,158 +165,61 @@ void FUDBTcpServer::ProcessClientData()
 		if (!FJsonSerializer::Deserialize(Reader, RequestJson) || !RequestJson.IsValid())
 		{
 			UE_LOG(LogUDBTcpServer, Warning, TEXT("Failed to parse JSON: %s"), *Line);
+			FUDBCommandResult ParseError = FUDBCommandHandler::Error(
+				TEXT("PARSE_ERROR"),
+				TEXT("Failed to parse JSON request")
+			);
+			SendResponse(FUDBCommandHandler::ResultToJson(ParseError, 0.0));
 			continue;
 		}
 
-		// Route command
+		// Extract command
 		FString Command;
 		if (!RequestJson->TryGetStringField(TEXT("command"), Command))
 		{
 			UE_LOG(LogUDBTcpServer, Warning, TEXT("JSON missing 'command' field: %s"), *Line);
+			FUDBCommandResult MissingCmd = FUDBCommandHandler::Error(
+				TEXT("MISSING_COMMAND"),
+				TEXT("JSON request missing 'command' field")
+			);
+			SendResponse(FUDBCommandHandler::ResultToJson(MissingCmd, 0.0));
 			continue;
 		}
 
-		FString ResponseString;
-
-		if (Command == TEXT("ping"))
+		// Extract params (optional)
+		const TSharedPtr<FJsonObject>* ParamsPtr = nullptr;
+		TSharedPtr<FJsonObject> Params;
+		if (RequestJson->TryGetObjectField(TEXT("params"), ParamsPtr) && ParamsPtr != nullptr)
 		{
-			TSharedRef<FJsonObject> ResponseJson = MakeShared<FJsonObject>();
-			ResponseJson->SetBoolField(TEXT("success"), true);
-
-			TSharedRef<FJsonObject> DataJson = MakeShared<FJsonObject>();
-			DataJson->SetStringField(TEXT("message"), TEXT("pong"));
-			ResponseJson->SetObjectField(TEXT("data"), DataJson);
-
-			TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
-				TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&ResponseString);
-			FJsonSerializer::Serialize(ResponseJson, Writer);
-		}
-		else if (Command == TEXT("list_datatables"))
-		{
-			TArray<TSharedPtr<FJsonValue>> DatatablesArray;
-
-			for (TObjectIterator<UDataTable> It; It; ++It)
-			{
-				UDataTable* DataTable = *It;
-				if (DataTable == nullptr)
-				{
-					continue;
-				}
-
-				TSharedRef<FJsonObject> EntryJson = MakeShared<FJsonObject>();
-				EntryJson->SetStringField(TEXT("name"), DataTable->GetName());
-				EntryJson->SetStringField(TEXT("path"), DataTable->GetPathName());
-
-				if (const UScriptStruct* RowStruct = DataTable->GetRowStruct())
-				{
-					EntryJson->SetStringField(TEXT("row_struct"), RowStruct->GetName());
-				}
-				else
-				{
-					EntryJson->SetStringField(TEXT("row_struct"), TEXT("None"));
-				}
-
-				EntryJson->SetNumberField(TEXT("row_count"), DataTable->GetRowMap().Num());
-
-				DatatablesArray.Add(MakeShared<FJsonValueObject>(EntryJson));
-			}
-
-			TSharedRef<FJsonObject> DataJson = MakeShared<FJsonObject>();
-			DataJson->SetArrayField(TEXT("datatables"), DatatablesArray);
-
-			TSharedRef<FJsonObject> ResponseJson = MakeShared<FJsonObject>();
-			ResponseJson->SetBoolField(TEXT("success"), true);
-			ResponseJson->SetObjectField(TEXT("data"), DataJson);
-
-			TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
-				TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&ResponseString);
-			FJsonSerializer::Serialize(ResponseJson, Writer);
-		}
-		else if (Command == TEXT("get_datatable_row"))
-		{
-			const TSharedPtr<FJsonObject>* ParamsObj = nullptr;
-			FString TablePath;
-			FString RowName;
-
-			bool bHasParams = RequestJson->TryGetObjectField(TEXT("params"), ParamsObj)
-				&& ParamsObj != nullptr
-				&& (*ParamsObj)->TryGetStringField(TEXT("table_path"), TablePath)
-				&& (*ParamsObj)->TryGetStringField(TEXT("row_name"), RowName);
-
-			if (!bHasParams)
-			{
-				TSharedRef<FJsonObject> ResponseJson = MakeShared<FJsonObject>();
-				ResponseJson->SetBoolField(TEXT("success"), false);
-				ResponseJson->SetStringField(TEXT("error"), TEXT("Missing params.table_path or params.row_name"));
-
-				TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
-					TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&ResponseString);
-				FJsonSerializer::Serialize(ResponseJson, Writer);
-			}
-			else
-			{
-				UDataTable* DataTable = LoadObject<UDataTable>(nullptr, *TablePath);
-				if (DataTable == nullptr)
-				{
-					TSharedRef<FJsonObject> ResponseJson = MakeShared<FJsonObject>();
-					ResponseJson->SetBoolField(TEXT("success"), false);
-					ResponseJson->SetStringField(TEXT("error"), FString::Printf(TEXT("DataTable not found: %s"), *TablePath));
-
-					TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
-						TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&ResponseString);
-					FJsonSerializer::Serialize(ResponseJson, Writer);
-				}
-				else
-				{
-					const void* RowData = DataTable->FindRowUnchecked(FName(*RowName));
-					if (RowData == nullptr)
-					{
-						TSharedRef<FJsonObject> ResponseJson = MakeShared<FJsonObject>();
-						ResponseJson->SetBoolField(TEXT("success"), false);
-						ResponseJson->SetStringField(TEXT("error"), FString::Printf(TEXT("Row not found: %s"), *RowName));
-
-						TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
-							TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&ResponseString);
-						FJsonSerializer::Serialize(ResponseJson, Writer);
-					}
-					else
-					{
-						TSharedPtr<FJsonObject> RowJson = FUDBSerializer::StructToJson(DataTable->GetRowStruct(), RowData);
-
-						TSharedRef<FJsonObject> DataJson = MakeShared<FJsonObject>();
-						DataJson->SetStringField(TEXT("table_path"), TablePath);
-						DataJson->SetStringField(TEXT("row_name"), RowName);
-						DataJson->SetStringField(TEXT("row_struct"), DataTable->GetRowStruct()->GetName());
-						DataJson->SetObjectField(TEXT("row_data"), RowJson);
-
-						TSharedRef<FJsonObject> ResponseJson = MakeShared<FJsonObject>();
-						ResponseJson->SetBoolField(TEXT("success"), true);
-						ResponseJson->SetObjectField(TEXT("data"), DataJson);
-
-						TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
-							TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&ResponseString);
-						FJsonSerializer::Serialize(ResponseJson, Writer);
-					}
-				}
-			}
-		}
-		else
-		{
-			UE_LOG(LogUDBTcpServer, Warning, TEXT("Unknown command: %s"), *Command);
-			continue;
+			Params = *ParamsPtr;
 		}
 
-		// Send response as UTF-8 with newline delimiter
-		ResponseString.Append(TEXT("\n"));
-		FTCHARToUTF8 Utf8Response(*ResponseString);
+		// Execute command with timing
+		const double StartTime = FPlatformTime::Seconds();
+		FUDBCommandResult Result = CommandHandler.Execute(Command, Params);
+		const double EndTime = FPlatformTime::Seconds();
+		const double TimingMs = (EndTime - StartTime) * 1000.0;
 
-		int32 BytesSent = 0;
-		if (!ClientSocket->Send(
-			reinterpret_cast<const uint8*>(Utf8Response.Get()),
-			Utf8Response.Length(),
-			BytesSent))
-		{
-			UE_LOG(LogUDBTcpServer, Warning, TEXT("Failed to send response"));
-		}
+		SendResponse(FUDBCommandHandler::ResultToJson(Result, TimingMs));
+	}
+}
+
+void FUDBTcpServer::SendResponse(const FString& ResponseString)
+{
+	if (ClientSocket == nullptr)
+	{
+		return;
+	}
+
+	FString ResponseWithNewline = ResponseString + TEXT("\n");
+	FTCHARToUTF8 Utf8Response(*ResponseWithNewline);
+
+	int32 BytesSent = 0;
+	if (!ClientSocket->Send(
+		reinterpret_cast<const uint8*>(Utf8Response.Get()),
+		Utf8Response.Length(),
+		BytesSent))
+	{
+		UE_LOG(LogUDBTcpServer, Warning, TEXT("Failed to send response"));
 	}
 }
