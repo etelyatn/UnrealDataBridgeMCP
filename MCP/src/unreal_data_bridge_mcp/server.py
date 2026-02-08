@@ -7,6 +7,9 @@ from mcp.server.fastmcp import FastMCP
 from .tcp_client import UEConnection
 from .tools.datatables import register_datatable_tools
 from .tools.gameplay_tags import register_gameplay_tag_tools
+from .tools.data_assets import register_data_asset_tools
+from .tools.localization import register_localization_tools
+from .tools.assets import register_asset_tools
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -36,6 +39,9 @@ def get_status() -> str:
 # Register tool groups
 register_datatable_tools(mcp, _connection)
 register_gameplay_tag_tools(mcp, _connection)
+register_data_asset_tools(mcp, _connection)
+register_localization_tools(mcp, _connection)
+register_asset_tools(mcp, _connection)
 
 
 def main():

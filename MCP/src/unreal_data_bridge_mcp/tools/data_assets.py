@@ -1,0 +1,94 @@
+"""MCP tools for DataAsset read and write operations."""
+
+import json
+import logging
+from ..tcp_client import UEConnection
+
+logger = logging.getLogger(__name__)
+
+
+def register_data_asset_tools(mcp, connection: UEConnection):
+    """Register all DataAsset-related MCP tools."""
+
+    @mcp.tool()
+    def list_data_assets(class_filter: str = "", path_filter: str = "") -> str:
+        """List DataAssets currently loaded in the Unreal Editor.
+
+        Returns each asset's name, path, and class type.
+        Use this to discover available DataAssets before reading their properties.
+
+        Args:
+            class_filter: Optional class name to filter by (e.g., 'URipProductDataAsset').
+                          Only returns assets of this class or its subclasses.
+            path_filter: Optional prefix filter for asset paths (e.g., '/Game/Ripper/Products/').
+                         Only returns assets whose path starts with this prefix.
+
+        Returns:
+            JSON with 'data_assets' array, each containing:
+            - name: Asset name (e.g., 'DA_CyberArm_Mk1')
+            - path: Full asset path
+            - class_name: UClass name of the DataAsset
+        """
+        try:
+            params = {}
+            if class_filter:
+                params["class_filter"] = class_filter
+            if path_filter:
+                params["path_filter"] = path_filter
+            response = connection.send_command("list_data_assets", params)
+            return json.dumps(response.get("data", {}), indent=2)
+        except ConnectionError as e:
+            return f"Error: {e}"
+
+    @mcp.tool()
+    def get_data_asset(asset_path: str) -> str:
+        """Read all properties of a DataAsset.
+
+        Use list_data_assets to discover available assets and their paths.
+
+        Args:
+            asset_path: Full asset path to the DataAsset
+                        (e.g., '/Game/Ripper/Products/DA_CyberArm_Mk1.DA_CyberArm_Mk1').
+
+        Returns:
+            JSON with:
+            - asset_path: The requested asset path
+            - class_name: UClass name of the DataAsset
+            - properties: Object with all property names and values
+        """
+        try:
+            response = connection.send_command("get_data_asset", {
+                "asset_path": asset_path,
+            })
+            return json.dumps(response.get("data", {}), indent=2)
+        except ConnectionError as e:
+            return f"Error: {e}"
+
+    @mcp.tool()
+    def update_data_asset(asset_path: str, properties: str) -> str:
+        """Update properties on a DataAsset.
+
+        Only properties present in the JSON are modified; other properties remain unchanged.
+        Use get_data_asset first to see current values and property names.
+
+        Note: This marks the asset as dirty (unsaved). Use Unreal's File > Save All to persist.
+
+        Args:
+            asset_path: Full asset path to the DataAsset.
+            properties: JSON string with property names and values to update.
+                        Example: '{"DisplayName": "Cyber Arm Mk2", "BaseCost": 5000}'
+
+        Returns:
+            JSON with success status, modified_properties list, and any warnings.
+        """
+        try:
+            props = json.loads(properties)
+            response = connection.send_command("update_data_asset", {
+                "asset_path": asset_path,
+                "properties": props,
+            })
+            return json.dumps(response.get("data", {}), indent=2)
+        except json.JSONDecodeError as e:
+            return f"Error: Invalid JSON in properties: {e}"
+        except ConnectionError as e:
+            return f"Error: {e}"
