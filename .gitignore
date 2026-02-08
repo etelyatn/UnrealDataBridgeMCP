@@ -1,0 +1,18 @@
+# UE build artifacts
+Binaries/
+Intermediate/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.egg-info/
+dist/
+build/
+
+# IDEs
+.vs/
+.idea/
+.vscode/
+*.DotSettings.user
