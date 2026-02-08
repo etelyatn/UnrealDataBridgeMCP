@@ -11,6 +11,8 @@
 
 DEFINE_LOG_CATEGORY_STATIC(LogUDBSerializer, Log, All);
 
+TMap<const UScriptStruct*, TArray<UScriptStruct*>> FUDBSerializer::SubtypeCache;
+
 TSharedPtr<FJsonObject> FUDBSerializer::StructToJson(const UStruct* StructType, const void* StructData)
 {
 	TSharedPtr<FJsonObject> JsonObject = MakeShared<FJsonObject>();
@@ -267,4 +269,293 @@ TSharedPtr<FJsonValue> FUDBSerializer::PropertyToJson(const FProperty* Property,
 	UE_LOG(LogUDBSerializer, Warning, TEXT("Unhandled property type: %s (%s)"),
 		*Property->GetName(), *Property->GetClass()->GetName());
 	return nullptr;
+}
+
+TSharedPtr<FJsonObject> FUDBSerializer::GetStructSchema(const UStruct* StructType, bool bIncludeInherited)
+{
+	TSharedPtr<FJsonObject> SchemaObj = MakeShared<FJsonObject>();
+
+	if (StructType == nullptr)
+	{
+		return SchemaObj;
+	}
+
+	SchemaObj->SetStringField(TEXT("struct_name"), StructType->GetName());
+
+	TArray<TSharedPtr<FJsonValue>> FieldsArray;
+
+	for (TFieldIterator<FProperty> It(StructType); It; ++It)
+	{
+		const FProperty* Property = *It;
+
+		// Skip inherited properties if not requested
+		if (!bIncludeInherited && Property->GetOwnerStruct() != StructType)
+		{
+			continue;
+		}
+
+		TSharedPtr<FJsonObject> PropSchema = GetPropertySchema(Property);
+		if (PropSchema.IsValid())
+		{
+			FieldsArray.Add(MakeShared<FJsonValueObject>(PropSchema));
+		}
+	}
+
+	SchemaObj->SetArrayField(TEXT("fields"), FieldsArray);
+
+	return SchemaObj;
+}
+
+TSharedPtr<FJsonObject> FUDBSerializer::GetPropertySchema(const FProperty* Property)
+{
+	if (Property == nullptr)
+	{
+		return nullptr;
+	}
+
+	TSharedPtr<FJsonObject> Schema = MakeShared<FJsonObject>();
+	Schema->SetStringField(TEXT("name"), Property->GetName());
+	Schema->SetStringField(TEXT("cpp_type"), Property->GetCPPType());
+
+	// Bool
+	if (CastField<FBoolProperty>(Property) != nullptr)
+	{
+		Schema->SetStringField(TEXT("type"), TEXT("bool"));
+		return Schema;
+	}
+
+	// Int
+	if (CastField<FIntProperty>(Property) != nullptr)
+	{
+		Schema->SetStringField(TEXT("type"), TEXT("int32"));
+		return Schema;
+	}
+
+	// Int64
+	if (CastField<FInt64Property>(Property) != nullptr)
+	{
+		Schema->SetStringField(TEXT("type"), TEXT("int64"));
+		return Schema;
+	}
+
+	// Float
+	if (CastField<FFloatProperty>(Property) != nullptr)
+	{
+		Schema->SetStringField(TEXT("type"), TEXT("float"));
+		return Schema;
+	}
+
+	// Double
+	if (CastField<FDoubleProperty>(Property) != nullptr)
+	{
+		Schema->SetStringField(TEXT("type"), TEXT("double"));
+		return Schema;
+	}
+
+	// FString
+	if (CastField<FStrProperty>(Property) != nullptr)
+	{
+		Schema->SetStringField(TEXT("type"), TEXT("FString"));
+		return Schema;
+	}
+
+	// FName
+	if (CastField<FNameProperty>(Property) != nullptr)
+	{
+		Schema->SetStringField(TEXT("type"), TEXT("FName"));
+		return Schema;
+	}
+
+	// FText
+	if (CastField<FTextProperty>(Property) != nullptr)
+	{
+		Schema->SetStringField(TEXT("type"), TEXT("FText"));
+		return Schema;
+	}
+
+	// Enum property (enum class)
+	if (const FEnumProperty* EnumProp = CastField<FEnumProperty>(Property))
+	{
+		const UEnum* Enum = EnumProp->GetEnum();
+		Schema->SetStringField(TEXT("type"), TEXT("enum"));
+		Schema->SetStringField(TEXT("enum_name"), Enum->GetName());
+
+		TArray<TSharedPtr<FJsonValue>> EnumValues;
+		for (int32 Index = 0; Index < Enum->NumEnums() - 1; ++Index)
+		{
+			EnumValues.Add(MakeShared<FJsonValueString>(Enum->GetNameStringByIndex(Index)));
+		}
+		Schema->SetArrayField(TEXT("enum_values"), EnumValues);
+		return Schema;
+	}
+
+	// Byte property with enum (old-style TEnumAsByte)
+	if (const FByteProperty* ByteProp = CastField<FByteProperty>(Property))
+	{
+		if (const UEnum* Enum = ByteProp->GetIntPropertyEnum())
+		{
+			Schema->SetStringField(TEXT("type"), TEXT("enum"));
+			Schema->SetStringField(TEXT("enum_name"), Enum->GetName());
+
+			TArray<TSharedPtr<FJsonValue>> EnumValues;
+			for (int32 Index = 0; Index < Enum->NumEnums() - 1; ++Index)
+			{
+				EnumValues.Add(MakeShared<FJsonValueString>(Enum->GetNameStringByIndex(Index)));
+			}
+			Schema->SetArrayField(TEXT("enum_values"), EnumValues);
+		}
+		else
+		{
+			Schema->SetStringField(TEXT("type"), TEXT("uint8"));
+		}
+		return Schema;
+	}
+
+	// Struct property
+	if (const FStructProperty* StructProp = CastField<FStructProperty>(Property))
+	{
+		// FInstancedStruct - include base type and known subtypes
+		if (StructProp->Struct == FInstancedStruct::StaticStruct())
+		{
+			Schema->SetStringField(TEXT("type"), TEXT("FInstancedStruct"));
+
+			// Check for metadata specifying the base struct type
+			if (Property->HasMetaData(TEXT("BaseStruct")))
+			{
+				const FString& BaseStructMeta = Property->GetMetaData(TEXT("BaseStruct"));
+				Schema->SetStringField(TEXT("instanced_struct_base"), BaseStructMeta);
+
+				// Try to find the base struct and list known subtypes
+				const UScriptStruct* BaseStruct = FindObject<UScriptStruct>(nullptr, *BaseStructMeta);
+				if (BaseStruct == nullptr)
+				{
+					// Try with short name
+					for (TObjectIterator<UScriptStruct> It; It; ++It)
+					{
+						if (It->GetName() == BaseStructMeta)
+						{
+							BaseStruct = *It;
+							break;
+						}
+					}
+				}
+
+				if (BaseStruct != nullptr)
+				{
+					TArray<UScriptStruct*> Subtypes = FindInstancedStructSubtypes(BaseStruct);
+					TArray<TSharedPtr<FJsonValue>> SubtypeNames;
+					for (const UScriptStruct* Subtype : Subtypes)
+					{
+						SubtypeNames.Add(MakeShared<FJsonValueString>(Subtype->GetName()));
+					}
+					Schema->SetArrayField(TEXT("known_subtypes"), SubtypeNames);
+				}
+			}
+			return Schema;
+		}
+
+		// Named struct types
+		Schema->SetStringField(TEXT("type"), StructProp->Struct->GetName());
+
+		// Recursively include fields for nested structs
+		TSharedPtr<FJsonObject> NestedSchema = GetStructSchema(StructProp->Struct);
+		if (NestedSchema.IsValid())
+		{
+			const TArray<TSharedPtr<FJsonValue>>* NestedFields = nullptr;
+			if (NestedSchema->TryGetArrayField(TEXT("fields"), NestedFields) && NestedFields != nullptr)
+			{
+				Schema->SetArrayField(TEXT("fields"), *NestedFields);
+			}
+		}
+		return Schema;
+	}
+
+	// Array property
+	if (const FArrayProperty* ArrayProp = CastField<FArrayProperty>(Property))
+	{
+		Schema->SetStringField(TEXT("type"), TEXT("TArray"));
+
+		TSharedPtr<FJsonObject> ElementSchema = GetPropertySchema(ArrayProp->Inner);
+		if (ElementSchema.IsValid())
+		{
+			Schema->SetObjectField(TEXT("element_type"), ElementSchema);
+		}
+		return Schema;
+	}
+
+	// Map property
+	if (const FMapProperty* MapProp = CastField<FMapProperty>(Property))
+	{
+		Schema->SetStringField(TEXT("type"), TEXT("TMap"));
+
+		TSharedPtr<FJsonObject> KeySchema = GetPropertySchema(MapProp->KeyProp);
+		if (KeySchema.IsValid())
+		{
+			Schema->SetObjectField(TEXT("key_type"), KeySchema);
+		}
+
+		TSharedPtr<FJsonObject> ValueSchema = GetPropertySchema(MapProp->ValueProp);
+		if (ValueSchema.IsValid())
+		{
+			Schema->SetObjectField(TEXT("value_type"), ValueSchema);
+		}
+		return Schema;
+	}
+
+	// Set property
+	if (const FSetProperty* SetProp = CastField<FSetProperty>(Property))
+	{
+		Schema->SetStringField(TEXT("type"), TEXT("TSet"));
+
+		TSharedPtr<FJsonObject> ElementSchema = GetPropertySchema(SetProp->ElementProp);
+		if (ElementSchema.IsValid())
+		{
+			Schema->SetObjectField(TEXT("element_type"), ElementSchema);
+		}
+		return Schema;
+	}
+
+	// Object property (hard reference)
+	if (const FObjectProperty* ObjProp = CastField<FObjectProperty>(Property))
+	{
+		Schema->SetStringField(TEXT("type"), TEXT("UObject*"));
+		Schema->SetStringField(TEXT("object_class"), ObjProp->PropertyClass->GetName());
+		return Schema;
+	}
+
+	// Soft object property
+	if (CastField<FSoftObjectProperty>(Property) != nullptr)
+	{
+		Schema->SetStringField(TEXT("type"), TEXT("TSoftObjectPtr"));
+		return Schema;
+	}
+
+	// Fallback
+	Schema->SetStringField(TEXT("type"), TEXT("unknown"));
+	return Schema;
+}
+
+TArray<UScriptStruct*> FUDBSerializer::FindInstancedStructSubtypes(const UScriptStruct* BaseStruct)
+{
+	if (BaseStruct == nullptr)
+	{
+		return TArray<UScriptStruct*>();
+	}
+
+	if (const TArray<UScriptStruct*>* Cached = SubtypeCache.Find(BaseStruct))
+	{
+		return *Cached;
+	}
+
+	TArray<UScriptStruct*> Subtypes;
+	for (TObjectIterator<UScriptStruct> It; It; ++It)
+	{
+		if (It->IsChildOf(BaseStruct) && *It != BaseStruct)
+		{
+			Subtypes.Add(*It);
+		}
+	}
+
+	SubtypeCache.Add(BaseStruct, Subtypes);
+	return Subtypes;
 }

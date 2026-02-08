@@ -13,4 +13,17 @@ public:
 
 	/** Serialize a single FProperty value to a JSON value */
 	static TSharedPtr<FJsonValue> PropertyToJson(const FProperty* Property, const void* ValuePtr);
+
+	/** Get schema for a UStruct (field names, types, enum values, nested schemas) */
+	static TSharedPtr<FJsonObject> GetStructSchema(const UStruct* StructType, bool bIncludeInherited = true);
+
+	/** Discover TInstancedStruct subtypes for a base struct */
+	static TArray<UScriptStruct*> FindInstancedStructSubtypes(const UScriptStruct* BaseStruct);
+
+private:
+	/** Build schema for a single property */
+	static TSharedPtr<FJsonObject> GetPropertySchema(const FProperty* Property);
+
+	/** Cache for TInstancedStruct subtype discovery */
+	static TMap<const UScriptStruct*, TArray<UScriptStruct*>> SubtypeCache;
 };
