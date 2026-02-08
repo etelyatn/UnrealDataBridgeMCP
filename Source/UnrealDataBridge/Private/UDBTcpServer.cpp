@@ -11,6 +11,7 @@
 #include "Serialization/JsonWriter.h"
 #include "Engine/DataTable.h"
 #include "UObject/UObjectIterator.h"
+#include "UDBSerializer.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogUDBTcpServer, Log, All);
 
@@ -233,6 +234,74 @@ void FUDBTcpServer::ProcessClientData()
 			TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
 				TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&ResponseString);
 			FJsonSerializer::Serialize(ResponseJson, Writer);
+		}
+		else if (Command == TEXT("get_datatable_row"))
+		{
+			const TSharedPtr<FJsonObject>* ParamsObj = nullptr;
+			FString TablePath;
+			FString RowName;
+
+			bool bHasParams = RequestJson->TryGetObjectField(TEXT("params"), ParamsObj)
+				&& ParamsObj != nullptr
+				&& (*ParamsObj)->TryGetStringField(TEXT("table_path"), TablePath)
+				&& (*ParamsObj)->TryGetStringField(TEXT("row_name"), RowName);
+
+			if (!bHasParams)
+			{
+				TSharedRef<FJsonObject> ResponseJson = MakeShared<FJsonObject>();
+				ResponseJson->SetBoolField(TEXT("success"), false);
+				ResponseJson->SetStringField(TEXT("error"), TEXT("Missing params.table_path or params.row_name"));
+
+				TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+					TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&ResponseString);
+				FJsonSerializer::Serialize(ResponseJson, Writer);
+			}
+			else
+			{
+				UDataTable* DataTable = LoadObject<UDataTable>(nullptr, *TablePath);
+				if (DataTable == nullptr)
+				{
+					TSharedRef<FJsonObject> ResponseJson = MakeShared<FJsonObject>();
+					ResponseJson->SetBoolField(TEXT("success"), false);
+					ResponseJson->SetStringField(TEXT("error"), FString::Printf(TEXT("DataTable not found: %s"), *TablePath));
+
+					TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+						TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&ResponseString);
+					FJsonSerializer::Serialize(ResponseJson, Writer);
+				}
+				else
+				{
+					const void* RowData = DataTable->FindRowUnchecked(FName(*RowName));
+					if (RowData == nullptr)
+					{
+						TSharedRef<FJsonObject> ResponseJson = MakeShared<FJsonObject>();
+						ResponseJson->SetBoolField(TEXT("success"), false);
+						ResponseJson->SetStringField(TEXT("error"), FString::Printf(TEXT("Row not found: %s"), *RowName));
+
+						TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+							TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&ResponseString);
+						FJsonSerializer::Serialize(ResponseJson, Writer);
+					}
+					else
+					{
+						TSharedPtr<FJsonObject> RowJson = FUDBSerializer::StructToJson(DataTable->GetRowStruct(), RowData);
+
+						TSharedRef<FJsonObject> DataJson = MakeShared<FJsonObject>();
+						DataJson->SetStringField(TEXT("table_path"), TablePath);
+						DataJson->SetStringField(TEXT("row_name"), RowName);
+						DataJson->SetStringField(TEXT("row_struct"), DataTable->GetRowStruct()->GetName());
+						DataJson->SetObjectField(TEXT("row_data"), RowJson);
+
+						TSharedRef<FJsonObject> ResponseJson = MakeShared<FJsonObject>();
+						ResponseJson->SetBoolField(TEXT("success"), true);
+						ResponseJson->SetObjectField(TEXT("data"), DataJson);
+
+						TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+							TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&ResponseString);
+						FJsonSerializer::Serialize(ResponseJson, Writer);
+					}
+				}
+			}
 		}
 		else
 		{
