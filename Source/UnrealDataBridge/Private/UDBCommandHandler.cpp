@@ -39,6 +39,22 @@ FUDBCommandResult FUDBCommandHandler::Execute(const FString& Command, const TSha
 	{
 		return FUDBDataTableOps::GetStructSchema(Params);
 	}
+	else if (Command == TEXT("add_datatable_row"))
+	{
+		return FUDBDataTableOps::AddDatatableRow(Params);
+	}
+	else if (Command == TEXT("update_datatable_row"))
+	{
+		return FUDBDataTableOps::UpdateDatatableRow(Params);
+	}
+	else if (Command == TEXT("delete_datatable_row"))
+	{
+		return FUDBDataTableOps::DeleteDatatableRow(Params);
+	}
+	else if (Command == TEXT("import_datatable_json"))
+	{
+		return FUDBDataTableOps::ImportDatatableJson(Params);
+	}
 
 	UE_LOG(LogUDBCommandHandler, Warning, TEXT("Unknown command: %s"), *Command);
 	return Error(UDBErrorCodes::UnknownCommand, FString::Printf(TEXT("Unknown command: %s"), *Command));

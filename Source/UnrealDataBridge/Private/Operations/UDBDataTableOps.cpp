@@ -289,6 +289,455 @@ FUDBCommandResult FUDBDataTableOps::GetDatatableRow(const TSharedPtr<FJsonObject
 	return FUDBCommandHandler::Success(Data);
 }
 
+FUDBCommandResult FUDBDataTableOps::AddDatatableRow(const TSharedPtr<FJsonObject>& Params)
+{
+	FString TablePath;
+	FString RowName;
+
+	bool bHasParams = Params.IsValid()
+		&& Params->TryGetStringField(TEXT("table_path"), TablePath)
+		&& Params->TryGetStringField(TEXT("row_name"), RowName);
+
+	if (!bHasParams)
+	{
+		return FUDBCommandHandler::Error(
+			UDBErrorCodes::InvalidField,
+			TEXT("Missing required params: table_path and row_name")
+		);
+	}
+
+	const TSharedPtr<FJsonObject>* RowData = nullptr;
+	if (!Params->TryGetObjectField(TEXT("row_data"), RowData) || RowData == nullptr || !(*RowData).IsValid())
+	{
+		return FUDBCommandHandler::Error(
+			UDBErrorCodes::InvalidField,
+			TEXT("Missing required param: row_data")
+		);
+	}
+
+	FUDBCommandResult LoadError;
+	UDataTable* DataTable = LoadDataTable(TablePath, LoadError);
+	if (DataTable == nullptr)
+	{
+		return LoadError;
+	}
+
+	const FName RowFName(*RowName);
+	if (DataTable->FindRowUnchecked(RowFName) != nullptr)
+	{
+		return FUDBCommandHandler::Error(
+			UDBErrorCodes::RowAlreadyExists,
+			FString::Printf(TEXT("Row already exists: %s"), *RowName)
+		);
+	}
+
+	const UScriptStruct* RowStruct = DataTable->GetRowStruct();
+	if (RowStruct == nullptr)
+	{
+		return FUDBCommandHandler::Error(
+			UDBErrorCodes::InvalidStructType,
+			FString::Printf(TEXT("DataTable has no row struct: %s"), *TablePath)
+		);
+	}
+
+	uint8* RowMemory = static_cast<uint8*>(FMemory::Malloc(RowStruct->GetStructureSize()));
+	RowStruct->InitializeStruct(RowMemory);
+
+	TArray<FString> Warnings;
+	bool bDeserializeSuccess = FUDBSerializer::JsonToStruct(*RowData, RowStruct, RowMemory, Warnings);
+
+	if (!bDeserializeSuccess)
+	{
+		RowStruct->DestroyStruct(RowMemory);
+		FMemory::Free(RowMemory);
+		return FUDBCommandHandler::Error(
+			UDBErrorCodes::SerializationError,
+			TEXT("Failed to deserialize row_data into row struct")
+		);
+	}
+
+	DataTable->AddRow(RowFName, RowMemory, RowStruct);
+
+	RowStruct->DestroyStruct(RowMemory);
+	FMemory::Free(RowMemory);
+
+	DataTable->MarkPackageDirty();
+
+	TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
+	Data->SetStringField(TEXT("row_name"), RowName);
+
+	if (Warnings.Num() > 0)
+	{
+		TArray<TSharedPtr<FJsonValue>> WarningsArray;
+		for (const FString& Warning : Warnings)
+		{
+			WarningsArray.Add(MakeShared<FJsonValueString>(Warning));
+		}
+		Data->SetArrayField(TEXT("warnings"), WarningsArray);
+	}
+
+	FUDBCommandResult Result = FUDBCommandHandler::Success(Data);
+	Result.Warnings = MoveTemp(Warnings);
+	return Result;
+}
+
+FUDBCommandResult FUDBDataTableOps::UpdateDatatableRow(const TSharedPtr<FJsonObject>& Params)
+{
+	FString TablePath;
+	FString RowName;
+
+	bool bHasParams = Params.IsValid()
+		&& Params->TryGetStringField(TEXT("table_path"), TablePath)
+		&& Params->TryGetStringField(TEXT("row_name"), RowName);
+
+	if (!bHasParams)
+	{
+		return FUDBCommandHandler::Error(
+			UDBErrorCodes::InvalidField,
+			TEXT("Missing required params: table_path and row_name")
+		);
+	}
+
+	const TSharedPtr<FJsonObject>* RowData = nullptr;
+	if (!Params->TryGetObjectField(TEXT("row_data"), RowData) || RowData == nullptr || !(*RowData).IsValid())
+	{
+		return FUDBCommandHandler::Error(
+			UDBErrorCodes::InvalidField,
+			TEXT("Missing required param: row_data")
+		);
+	}
+
+	FUDBCommandResult LoadError;
+	UDataTable* DataTable = LoadDataTable(TablePath, LoadError);
+	if (DataTable == nullptr)
+	{
+		return LoadError;
+	}
+
+	const FName RowFName(*RowName);
+	uint8* RowPtr = DataTable->FindRowUnchecked(RowFName);
+	if (RowPtr == nullptr)
+	{
+		return FUDBCommandHandler::Error(
+			UDBErrorCodes::RowNotFound,
+			FString::Printf(TEXT("Row not found: %s"), *RowName)
+		);
+	}
+
+	const UScriptStruct* RowStruct = DataTable->GetRowStruct();
+	if (RowStruct == nullptr)
+	{
+		return FUDBCommandHandler::Error(
+			UDBErrorCodes::InvalidStructType,
+			FString::Printf(TEXT("DataTable has no row struct: %s"), *TablePath)
+		);
+	}
+
+	// Track which fields were modified
+	TArray<FString> ModifiedFields;
+	for (const auto& Pair : (*RowData)->Values)
+	{
+		ModifiedFields.Add(Pair.Key);
+	}
+
+	TArray<FString> Warnings;
+	bool bDeserializeSuccess = FUDBSerializer::JsonToStruct(*RowData, RowStruct, RowPtr, Warnings);
+
+	if (!bDeserializeSuccess)
+	{
+		return FUDBCommandHandler::Error(
+			UDBErrorCodes::SerializationError,
+			TEXT("Failed to deserialize row_data into existing row")
+		);
+	}
+
+	DataTable->HandleDataTableChanged(RowFName);
+	DataTable->MarkPackageDirty();
+
+	TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
+	Data->SetStringField(TEXT("row_name"), RowName);
+
+	TArray<TSharedPtr<FJsonValue>> ModifiedFieldsArray;
+	for (const FString& Field : ModifiedFields)
+	{
+		ModifiedFieldsArray.Add(MakeShared<FJsonValueString>(Field));
+	}
+	Data->SetArrayField(TEXT("modified_fields"), ModifiedFieldsArray);
+
+	if (Warnings.Num() > 0)
+	{
+		TArray<TSharedPtr<FJsonValue>> WarningsArray;
+		for (const FString& Warning : Warnings)
+		{
+			WarningsArray.Add(MakeShared<FJsonValueString>(Warning));
+		}
+		Data->SetArrayField(TEXT("warnings"), WarningsArray);
+	}
+
+	FUDBCommandResult Result = FUDBCommandHandler::Success(Data);
+	Result.Warnings = MoveTemp(Warnings);
+	return Result;
+}
+
+FUDBCommandResult FUDBDataTableOps::DeleteDatatableRow(const TSharedPtr<FJsonObject>& Params)
+{
+	FString TablePath;
+	FString RowName;
+
+	bool bHasParams = Params.IsValid()
+		&& Params->TryGetStringField(TEXT("table_path"), TablePath)
+		&& Params->TryGetStringField(TEXT("row_name"), RowName);
+
+	if (!bHasParams)
+	{
+		return FUDBCommandHandler::Error(
+			UDBErrorCodes::InvalidField,
+			TEXT("Missing required params: table_path and row_name")
+		);
+	}
+
+	FUDBCommandResult LoadError;
+	UDataTable* DataTable = LoadDataTable(TablePath, LoadError);
+	if (DataTable == nullptr)
+	{
+		return LoadError;
+	}
+
+	const FName RowFName(*RowName);
+	if (DataTable->FindRowUnchecked(RowFName) == nullptr)
+	{
+		return FUDBCommandHandler::Error(
+			UDBErrorCodes::RowNotFound,
+			FString::Printf(TEXT("Row not found: %s"), *RowName)
+		);
+	}
+
+	DataTable->RemoveRow(RowFName);
+	DataTable->MarkPackageDirty();
+
+	TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
+	Data->SetStringField(TEXT("row_name"), RowName);
+
+	return FUDBCommandHandler::Success(Data);
+}
+
+FUDBCommandResult FUDBDataTableOps::ImportDatatableJson(const TSharedPtr<FJsonObject>& Params)
+{
+	FString TablePath;
+	if (!Params.IsValid() || !Params->TryGetStringField(TEXT("table_path"), TablePath))
+	{
+		return FUDBCommandHandler::Error(
+			UDBErrorCodes::InvalidField,
+			TEXT("Missing required param: table_path")
+		);
+	}
+
+	const TArray<TSharedPtr<FJsonValue>>* RowsArray = nullptr;
+	if (!Params->TryGetArrayField(TEXT("rows"), RowsArray) || RowsArray == nullptr)
+	{
+		return FUDBCommandHandler::Error(
+			UDBErrorCodes::InvalidField,
+			TEXT("Missing required param: rows")
+		);
+	}
+
+	FString Mode = TEXT("create");
+	Params->TryGetStringField(TEXT("mode"), Mode);
+
+	bool bDryRun = false;
+	Params->TryGetBoolField(TEXT("dry_run"), bDryRun);
+
+	if (Mode != TEXT("create") && Mode != TEXT("upsert") && Mode != TEXT("replace"))
+	{
+		return FUDBCommandHandler::Error(
+			UDBErrorCodes::InvalidValue,
+			FString::Printf(TEXT("Invalid mode: %s. Must be create, upsert, or replace"), *Mode)
+		);
+	}
+
+	FUDBCommandResult LoadError;
+	UDataTable* DataTable = LoadDataTable(TablePath, LoadError);
+	if (DataTable == nullptr)
+	{
+		return LoadError;
+	}
+
+	const UScriptStruct* RowStruct = DataTable->GetRowStruct();
+	if (RowStruct == nullptr)
+	{
+		return FUDBCommandHandler::Error(
+			UDBErrorCodes::InvalidStructType,
+			FString::Printf(TEXT("DataTable has no row struct: %s"), *TablePath)
+		);
+	}
+
+	if (Mode == TEXT("replace") && !bDryRun)
+	{
+		DataTable->EmptyTable();
+	}
+
+	int32 CreatedCount = 0;
+	int32 UpdatedCount = 0;
+	int32 SkippedCount = 0;
+	TArray<FString> Errors;
+	TArray<FString> Warnings;
+
+	for (int32 Index = 0; Index < RowsArray->Num(); ++Index)
+	{
+		const TSharedPtr<FJsonValue>& RowEntry = (*RowsArray)[Index];
+		if (!RowEntry.IsValid() || RowEntry->Type != EJson::Object)
+		{
+			Errors.Add(FString::Printf(TEXT("Row %d: invalid entry (not an object)"), Index));
+			continue;
+		}
+
+		const TSharedPtr<FJsonObject>& RowEntryObj = RowEntry->AsObject();
+		FString EntryRowName;
+		if (!RowEntryObj->TryGetStringField(TEXT("row_name"), EntryRowName))
+		{
+			Errors.Add(FString::Printf(TEXT("Row %d: missing row_name"), Index));
+			continue;
+		}
+
+		const TSharedPtr<FJsonObject>* EntryRowData = nullptr;
+		if (!RowEntryObj->TryGetObjectField(TEXT("row_data"), EntryRowData) || EntryRowData == nullptr || !(*EntryRowData).IsValid())
+		{
+			Errors.Add(FString::Printf(TEXT("Row %d (%s): missing row_data"), Index, *EntryRowName));
+			continue;
+		}
+
+		const FName EntryRowFName(*EntryRowName);
+		uint8* ExistingRow = DataTable->FindRowUnchecked(EntryRowFName);
+		bool bRowExists = (ExistingRow != nullptr);
+
+		if (bDryRun)
+		{
+			// Validate by attempting deserialization into temp memory
+			uint8* TempMemory = static_cast<uint8*>(FMemory::Malloc(RowStruct->GetStructureSize()));
+			RowStruct->InitializeStruct(TempMemory);
+
+			TArray<FString> RowWarnings;
+			bool bSuccess = FUDBSerializer::JsonToStruct(*EntryRowData, RowStruct, TempMemory, RowWarnings);
+
+			RowStruct->DestroyStruct(TempMemory);
+			FMemory::Free(TempMemory);
+
+			if (!bSuccess)
+			{
+				Errors.Add(FString::Printf(TEXT("Row %d (%s): deserialization failed"), Index, *EntryRowName));
+			}
+			else
+			{
+				for (const FString& W : RowWarnings)
+				{
+					Warnings.Add(FString::Printf(TEXT("Row %d (%s): %s"), Index, *EntryRowName, *W));
+				}
+
+				if (bRowExists && Mode == TEXT("create"))
+				{
+					++SkippedCount;
+				}
+				else if (bRowExists)
+				{
+					++UpdatedCount;
+				}
+				else
+				{
+					++CreatedCount;
+				}
+			}
+			continue;
+		}
+
+		// Non-dry-run execution
+		if (bRowExists && Mode == TEXT("create"))
+		{
+			++SkippedCount;
+			continue;
+		}
+
+		if (bRowExists && Mode == TEXT("upsert"))
+		{
+			// Update existing row in place
+			TArray<FString> RowWarnings;
+			bool bSuccess = FUDBSerializer::JsonToStruct(*EntryRowData, RowStruct, ExistingRow, RowWarnings);
+			if (!bSuccess)
+			{
+				Errors.Add(FString::Printf(TEXT("Row %d (%s): deserialization failed"), Index, *EntryRowName));
+				continue;
+			}
+			for (const FString& W : RowWarnings)
+			{
+				Warnings.Add(FString::Printf(TEXT("Row %d (%s): %s"), Index, *EntryRowName, *W));
+			}
+			DataTable->HandleDataTableChanged(EntryRowFName);
+			++UpdatedCount;
+		}
+		else
+		{
+			// Create new row
+			uint8* RowMemory = static_cast<uint8*>(FMemory::Malloc(RowStruct->GetStructureSize()));
+			RowStruct->InitializeStruct(RowMemory);
+
+			TArray<FString> RowWarnings;
+			bool bSuccess = FUDBSerializer::JsonToStruct(*EntryRowData, RowStruct, RowMemory, RowWarnings);
+
+			if (!bSuccess)
+			{
+				RowStruct->DestroyStruct(RowMemory);
+				FMemory::Free(RowMemory);
+				Errors.Add(FString::Printf(TEXT("Row %d (%s): deserialization failed"), Index, *EntryRowName));
+				continue;
+			}
+
+			for (const FString& W : RowWarnings)
+			{
+				Warnings.Add(FString::Printf(TEXT("Row %d (%s): %s"), Index, *EntryRowName, *W));
+			}
+
+			DataTable->AddRow(EntryRowFName, RowMemory, RowStruct);
+
+			RowStruct->DestroyStruct(RowMemory);
+			FMemory::Free(RowMemory);
+			++CreatedCount;
+		}
+	}
+
+	if (!bDryRun)
+	{
+		DataTable->MarkPackageDirty();
+	}
+
+	TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
+	Data->SetNumberField(TEXT("created"), CreatedCount);
+	Data->SetNumberField(TEXT("updated"), UpdatedCount);
+	Data->SetNumberField(TEXT("skipped"), SkippedCount);
+
+	if (Errors.Num() > 0)
+	{
+		TArray<TSharedPtr<FJsonValue>> ErrorsArray;
+		for (const FString& Err : Errors)
+		{
+			ErrorsArray.Add(MakeShared<FJsonValueString>(Err));
+		}
+		Data->SetArrayField(TEXT("errors"), ErrorsArray);
+	}
+
+	if (Warnings.Num() > 0)
+	{
+		TArray<TSharedPtr<FJsonValue>> WarningsArray;
+		for (const FString& Warning : Warnings)
+		{
+			WarningsArray.Add(MakeShared<FJsonValueString>(Warning));
+		}
+		Data->SetArrayField(TEXT("warnings"), WarningsArray);
+	}
+
+	FUDBCommandResult Result = FUDBCommandHandler::Success(Data);
+	Result.Warnings = MoveTemp(Warnings);
+	return Result;
+}
+
 FUDBCommandResult FUDBDataTableOps::GetStructSchema(const TSharedPtr<FJsonObject>& Params)
 {
 	FString StructName;
