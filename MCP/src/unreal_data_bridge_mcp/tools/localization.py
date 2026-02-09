@@ -3,6 +3,7 @@
 import json
 import logging
 from ..tcp_client import UEConnection
+from ..response import format_response
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,7 @@ def register_localization_tools(mcp, connection: UEConnection):
             response = connection.send_command_cached(
                 "list_string_tables", params, ttl=_TTL_LIST
             )
-            return json.dumps(response.get("data", {}), indent=2)
+            return format_response(response.get("data", {}), "list_string_tables")
         except ConnectionError as e:
             return f"Error: {e}"
 
@@ -64,7 +65,7 @@ def register_localization_tools(mcp, connection: UEConnection):
             if key_pattern:
                 params["key_pattern"] = key_pattern
             response = connection.send_command("get_translations", params)
-            return json.dumps(response.get("data", {}), indent=2)
+            return format_response(response.get("data", {}), "get_translations")
         except ConnectionError as e:
             return f"Error: {e}"
 
@@ -90,6 +91,6 @@ def register_localization_tools(mcp, connection: UEConnection):
                 "key": key,
                 "text": text,
             })
-            return json.dumps(response.get("data", {}), indent=2)
+            return format_response(response.get("data", {}), "set_translation")
         except ConnectionError as e:
             return f"Error: {e}"

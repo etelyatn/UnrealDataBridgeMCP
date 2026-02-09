@@ -3,6 +3,7 @@
 import json
 import logging
 from ..tcp_client import UEConnection
+from ..response import format_response
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ def register_datatable_tools(mcp, connection: UEConnection):
             response = connection.send_command_cached(
                 "list_datatables", {"path_filter": path_filter}, ttl=_TTL_LIST
             )
-            return json.dumps(response.get("data", {}), indent=2)
+            return format_response(response.get("data", {}), "list_datatables")
         except ConnectionError as e:
             return f"Error: {e}"
 
@@ -74,7 +75,7 @@ def register_datatable_tools(mcp, connection: UEConnection):
                 {"table_path": table_path, "include_inherited": include_inherited},
                 ttl=_TTL_SCHEMA,
             )
-            return json.dumps(response.get("data", {}), indent=2)
+            return format_response(response.get("data", {}), "get_datatable_schema")
         except ConnectionError as e:
             return f"Error: {e}"
 
@@ -83,20 +84,24 @@ def register_datatable_tools(mcp, connection: UEConnection):
         table_path: str,
         row_name_pattern: str = "",
         fields: str = "",
-        limit: int = 100,
+        limit: int = 25,
         offset: int = 0,
     ) -> str:
         """Query rows from a DataTable with optional filtering, field selection, and pagination.
 
         Use get_datatable_schema first to understand the row structure.
 
+        For tables with complex nested structs, use 'fields' to select only needed
+        fields. This skips serialization of heavy nested data (like InstancedStruct
+        arrays) and dramatically reduces response size.
+
         Args:
             table_path: Full asset path to the DataTable.
             row_name_pattern: Optional wildcard pattern to filter row names (e.g., 'Quest_*', '*_Boss').
                               Uses Unreal wildcard matching (* for any chars, ? for single char).
             fields: Optional comma-separated list of field names to include in results.
-                    Leave empty to include all fields. Example: 'QuestName,Difficulty,Rewards'.
-            limit: Maximum number of rows to return (default: 100).
+                    Leave empty to include all fields. Example: 'Title,QuestType,Priority'.
+            limit: Maximum number of rows to return (default: 25).
             offset: Number of rows to skip for pagination (default: 0).
 
         Returns:
@@ -117,7 +122,7 @@ def register_datatable_tools(mcp, connection: UEConnection):
             if fields:
                 params["fields"] = [f.strip() for f in fields.split(",")]
             response = connection.send_command("query_datatable", params)
-            return json.dumps(response.get("data", {}), indent=2)
+            return format_response(response.get("data", {}), "query_datatable")
         except ConnectionError as e:
             return f"Error: {e}"
 
@@ -142,7 +147,7 @@ def register_datatable_tools(mcp, connection: UEConnection):
                 "table_path": table_path,
                 "row_name": row_name,
             })
-            return json.dumps(response.get("data", {}), indent=2)
+            return format_response(response.get("data", {}), "get_datatable_row")
         except ConnectionError as e:
             return f"Error: {e}"
 
@@ -169,7 +174,7 @@ def register_datatable_tools(mcp, connection: UEConnection):
                 {"struct_name": struct_name, "include_subtypes": include_subtypes},
                 ttl=_TTL_SCHEMA,
             )
-            return json.dumps(response.get("data", {}), indent=2)
+            return format_response(response.get("data", {}), "get_struct_schema")
         except ConnectionError as e:
             return f"Error: {e}"
 
@@ -206,7 +211,7 @@ def register_datatable_tools(mcp, connection: UEConnection):
             # Invalidate list caches (row count changed)
             connection.invalidate_cache("list_datatables:")
             connection.invalidate_cache("get_data_catalog:")
-            return json.dumps(response.get("data", {}), indent=2)
+            return format_response(response.get("data", {}), "add_datatable_row")
         except json.JSONDecodeError as e:
             return f"Error: Invalid JSON in row_data: {e}"
         except ConnectionError as e:
@@ -243,7 +248,7 @@ def register_datatable_tools(mcp, connection: UEConnection):
                 "row_name": row_name,
                 "row_data": data,
             })
-            return json.dumps(response.get("data", {}), indent=2)
+            return format_response(response.get("data", {}), "update_datatable_row")
         except json.JSONDecodeError as e:
             return f"Error: Invalid JSON in row_data: {e}"
         except ConnectionError as e:
@@ -273,7 +278,7 @@ def register_datatable_tools(mcp, connection: UEConnection):
             # Invalidate list caches (row count changed)
             connection.invalidate_cache("list_datatables:")
             connection.invalidate_cache("get_data_catalog:")
-            return json.dumps(response.get("data", {}), indent=2)
+            return format_response(response.get("data", {}), "delete_datatable_row")
         except ConnectionError as e:
             return f"Error: {e}"
 
@@ -283,7 +288,7 @@ def register_datatable_tools(mcp, connection: UEConnection):
         search_text: str,
         fields: str = "",
         preview_fields: str = "",
-        limit: int = 50,
+        limit: int = 20,
     ) -> str:
         """Search inside DataTable row field values for a case-insensitive substring match.
 
@@ -303,7 +308,7 @@ def register_datatable_tools(mcp, connection: UEConnection):
                     Leave empty to search all string-like fields.
             preview_fields: Optional comma-separated field names to include in each result
                             for context (e.g., 'QuestTag,QuestType'). Top-level fields only.
-            limit: Maximum number of matching rows to return (default: 50).
+            limit: Maximum number of matching rows to return (default: 20).
 
         Returns:
             JSON with:
@@ -327,7 +332,7 @@ def register_datatable_tools(mcp, connection: UEConnection):
             if preview_fields:
                 params["preview_fields"] = [f.strip() for f in preview_fields.split(",")]
             response = connection.send_command("search_datatable_content", params)
-            return json.dumps(response.get("data", {}), indent=2)
+            return format_response(response.get("data", {}), "search_datatable_content")
         except ConnectionError as e:
             return f"Error: {e}"
 
@@ -362,7 +367,7 @@ def register_datatable_tools(mcp, connection: UEConnection):
                 # Invalidate list caches (row counts changed)
                 connection.invalidate_cache("list_datatables:")
                 connection.invalidate_cache("get_data_catalog:")
-            return json.dumps(response.get("data", {}), indent=2)
+            return format_response(response.get("data", {}), "import_datatable_json")
         except json.JSONDecodeError as e:
             return f"Error: Invalid JSON in rows: {e}"
         except ConnectionError as e:

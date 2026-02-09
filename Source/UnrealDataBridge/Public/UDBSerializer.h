@@ -10,6 +10,10 @@ public:
 	/** Serialize a UStruct instance to a JSON object using UProperty reflection */
 	static TSharedPtr<FJsonObject> StructToJson(const UStruct* StructType, const void* StructData);
 
+	/** Serialize a UStruct instance to a JSON object, only including fields in the filter set.
+	 *  When FieldFilter is empty, delegates to the full-serialization overload. */
+	static TSharedPtr<FJsonObject> StructToJson(const UStruct* StructType, const void* StructData, const TSet<FString>& FieldFilter);
+
 	/** Serialize a single FProperty value to a JSON value */
 	static TSharedPtr<FJsonValue> PropertyToJson(const FProperty* Property, const void* ValuePtr);
 

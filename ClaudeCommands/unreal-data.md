@@ -5,33 +5,34 @@ description: Query and manipulate Unreal Engine data via natural language
 
 Use the available UnrealDataBridge MCP tools to fulfill the user's request.
 
-## Catalog-First Strategy
+## Context-First Strategy
 
-**Always start with `get_data_catalog`** — it returns a cached overview of ALL project data
-(DataTables with top field names, GameplayTag prefixes, DataAsset classes, StringTables)
-in a single call. Use it to plan targeted queries without exploratory discovery.
+**Check conversation context before calling any discovery tools.** If you already know
+the table paths, row structs, or field names from earlier in the conversation, go directly
+to the data operation — don't waste context re-fetching the catalog.
+
+Only call discovery tools when you genuinely don't know what exists:
+- `get_data_catalog` — when you need a broad overview of ALL project data
+- `list_datatables` — when you just need table paths
+- `get_datatable_schema` — when you need full field type details
 
 ## Implementation Steps
 
-1. **Call `get_data_catalog` first** (cached for 10 minutes, near-instant on repeat calls):
-   - Identifies which tables exist and their row structs
-   - Shows composite tables (`is_composite=true`) — prefer these for broad searches
-   - Lists top field names per table (eliminates separate schema calls for discovery)
-   - Shows tag prefix categories and data asset classes
+1. **Check what you already know** from conversation context:
+   - Do you already know the table path? → Skip discovery
+   - Do you know the field names? → Skip schema calls
+   - If you know nothing, call `get_data_catalog` (cached 10 min)
 
-2. **Use the catalog to plan targeted queries:**
-   - Know the exact table path before calling `search_datatable_content` or `query_datatable`
-   - Use `top_fields` to understand table structure without calling `get_datatable_schema`
-   - Only call `get_datatable_schema` when you need full field details (types, enums, nested structs)
-
-3. **Map to MCP tool calls:**
-   - "get status" → `get_status`
-   - "find/search [text] in [table]" → `search_datatable_content` (use catalog to find the right table)
+2. **Map to MCP tool calls:**
+   - "find/search [text] in [table]" → `search_datatable_content`
    - "get table X row Y" → `get_datatable_row`
-   - "list tables [path]" → `list_datatables` (or just read from catalog)
+   - "list tables [path]" → `list_datatables`
    - "show schema for table X" → `get_datatable_schema`
    - "search assets [query]" → `search_assets`
    - "list tags [prefix]" → `list_gameplay_tags`
+
+3. **Use `fields` param** on `query_datatable` to select only needed fields.
+   This skips serialization of heavy nested data and keeps responses small.
 
 4. **Load tools before calling:**
    - Use `ToolSearch` to load any deferred MCP tools before using them
@@ -41,17 +42,10 @@ in a single call. Use it to plan targeted queries without exploratory discovery.
    - Use lists for collections
    - Highlight important values
 
-## Usage Examples
+## Common Table Paths
 
-```
-/unreal-data get status
-/unreal-data find quest "Punk Is Dead"
-/unreal-data get table /Game/Data/DT_Items.DT_Items row Item_Sword_01
-/unreal-data list tables in /Game/Data/
-/unreal-data show schema for table /Game/Data/DT_Items.DT_Items
-/unreal-data search assets containing "Weapon"
-/unreal-data list tags starting with "Item."
-```
+If the user mentions "quests", the composite table is likely `CQT_Quests`.
+Use `search_datatable_content` on it directly without catalog lookup.
 
 ## Error Handling
 

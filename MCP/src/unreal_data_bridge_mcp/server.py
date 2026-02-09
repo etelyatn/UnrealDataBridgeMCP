@@ -6,6 +6,7 @@ import os
 import sys
 from mcp.server.fastmcp import FastMCP
 from .tcp_client import UEConnection
+from .response import format_response
 from .tools.datatables import register_datatable_tools
 from .tools.gameplay_tags import register_gameplay_tag_tools
 from .tools.data_assets import register_data_asset_tools
@@ -39,19 +40,18 @@ def get_status() -> str:
     """
     try:
         response = _connection.send_command("get_status")
-        return json.dumps(response.get("data", {}), indent=2)
+        return format_response(response.get("data", {}), "get_status")
     except ConnectionError as e:
         return f"Not connected to Unreal Editor: {e}"
 
 
 @mcp.tool()
 def get_data_catalog() -> str:
-    """CALL THIS FIRST before any other data operations.
+    """Get a compact overview of all project data in a single call.
 
-    Returns a compact overview of ALL project data in a single call:
-    DataTables (with top field names), GameplayTag prefixes, DataAsset classes,
-    and StringTables. Use this to understand the project's data structure and
-    plan targeted queries without exploratory discovery calls.
+    Returns DataTables (with top field names), GameplayTag prefixes, DataAsset classes,
+    and StringTables. Useful when you need to understand the project's data structure
+    or discover what tables/assets exist before making targeted queries.
 
     The catalog is cached for 10 minutes. Use refresh_cache if data has changed
     externally (e.g., new tables created in editor, C++ recompile).
@@ -68,7 +68,7 @@ def get_data_catalog() -> str:
         response = _connection.send_command_cached(
             "get_data_catalog", {}, ttl=_TTL_CATALOG
         )
-        return json.dumps(response.get("data", {}), indent=2)
+        return format_response(response.get("data", {}), "get_data_catalog")
     except ConnectionError as e:
         return f"Error: {e}"
 

@@ -3,6 +3,7 @@
 import json
 import logging
 from ..tcp_client import UEConnection
+from ..response import format_response
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,6 @@ def register_asset_tools(mcp, connection: UEConnection):
             response = connection.send_command_cached(
                 "search_assets", params, ttl=_TTL_SEARCH
             )
-            return json.dumps(response.get("data", {}), indent=2)
+            return format_response(response.get("data", {}), "search_assets")
         except ConnectionError as e:
             return f"Error: {e}"

@@ -48,6 +48,40 @@ TSharedPtr<FJsonObject> FUDBSerializer::StructToJson(const UStruct* StructType, 
 	return JsonObject;
 }
 
+TSharedPtr<FJsonObject> FUDBSerializer::StructToJson(const UStruct* StructType, const void* StructData, const TSet<FString>& FieldFilter)
+{
+	if (FieldFilter.Num() == 0)
+	{
+		return StructToJson(StructType, StructData);
+	}
+
+	TSharedPtr<FJsonObject> JsonObject = MakeShared<FJsonObject>();
+
+	if (StructType == nullptr || StructData == nullptr)
+	{
+		return JsonObject;
+	}
+
+	for (TFieldIterator<FProperty> It(StructType); It; ++It)
+	{
+		const FProperty* Property = *It;
+		if (!FieldFilter.Contains(Property->GetName()))
+		{
+			continue;
+		}
+
+		const void* ValuePtr = Property->ContainerPtrToValuePtr<void>(StructData);
+
+		TSharedPtr<FJsonValue> JsonValue = PropertyToJson(Property, ValuePtr);
+		if (JsonValue.IsValid())
+		{
+			JsonObject->SetField(Property->GetName(), JsonValue);
+		}
+	}
+
+	return JsonObject;
+}
+
 TSharedPtr<FJsonValue> FUDBSerializer::PropertyToJson(const FProperty* Property, const void* ValuePtr)
 {
 	if (Property == nullptr || ValuePtr == nullptr)

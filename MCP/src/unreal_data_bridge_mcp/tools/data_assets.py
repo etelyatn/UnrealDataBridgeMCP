@@ -3,6 +3,7 @@
 import json
 import logging
 from ..tcp_client import UEConnection
+from ..response import format_response
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,7 @@ def register_data_asset_tools(mcp, connection: UEConnection):
             response = connection.send_command_cached(
                 "list_data_assets", params, ttl=_TTL_LIST
             )
-            return json.dumps(response.get("data", {}), indent=2)
+            return format_response(response.get("data", {}), "list_data_assets")
         except ConnectionError as e:
             return f"Error: {e}"
 
@@ -64,7 +65,7 @@ def register_data_asset_tools(mcp, connection: UEConnection):
             response = connection.send_command("get_data_asset", {
                 "asset_path": asset_path,
             })
-            return json.dumps(response.get("data", {}), indent=2)
+            return format_response(response.get("data", {}), "get_data_asset")
         except ConnectionError as e:
             return f"Error: {e}"
 
@@ -91,7 +92,7 @@ def register_data_asset_tools(mcp, connection: UEConnection):
                 "asset_path": asset_path,
                 "properties": props,
             })
-            return json.dumps(response.get("data", {}), indent=2)
+            return format_response(response.get("data", {}), "update_data_asset")
         except json.JSONDecodeError as e:
             return f"Error: Invalid JSON in properties: {e}"
         except ConnectionError as e:

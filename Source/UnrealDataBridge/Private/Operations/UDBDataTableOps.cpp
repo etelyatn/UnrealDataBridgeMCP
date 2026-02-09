@@ -253,7 +253,7 @@ FUDBCommandResult FUDBDataTableOps::QueryDatatable(const TSharedPtr<FJsonObject>
 	}
 
 	int32 Offset = 0;
-	int32 Limit = 100;
+	int32 Limit = 25;
 	if (Params.IsValid())
 	{
 		// TryGetNumberField returns double; cast to int32
@@ -270,7 +270,7 @@ FUDBCommandResult FUDBDataTableOps::QueryDatatable(const TSharedPtr<FJsonObject>
 	}
 
 	// Parse optional fields projection
-	TArray<FString> FieldsProjection;
+	TSet<FString> FieldsProjection;
 	if (Params.IsValid())
 	{
 		const TArray<TSharedPtr<FJsonValue>>* FieldsArray = nullptr;
@@ -319,21 +319,7 @@ FUDBCommandResult FUDBDataTableOps::QueryDatatable(const TSharedPtr<FJsonObject>
 			continue;
 		}
 
-		TSharedPtr<FJsonObject> RowJson = FUDBSerializer::StructToJson(RowStruct, RowData);
-
-		// Apply fields projection
-		if (FieldsProjection.Num() > 0 && RowJson.IsValid())
-		{
-			TSharedPtr<FJsonObject> ProjectedJson = MakeShared<FJsonObject>();
-			for (const FString& FieldName : FieldsProjection)
-			{
-				if (RowJson->HasField(FieldName))
-				{
-					ProjectedJson->SetField(FieldName, RowJson->TryGetField(FieldName));
-				}
-			}
-			RowJson = ProjectedJson;
-		}
+		TSharedPtr<FJsonObject> RowJson = FUDBSerializer::StructToJson(RowStruct, RowData, FieldsProjection);
 
 		TSharedRef<FJsonObject> EntryJson = MakeShared<FJsonObject>();
 		EntryJson->SetStringField(TEXT("row_name"), RowName.ToString());
@@ -1169,7 +1155,7 @@ FUDBCommandResult FUDBDataTableOps::SearchDatatableContent(const TSharedPtr<FJso
 	}
 
 	// Parse limit
-	int32 Limit = 50;
+	int32 Limit = 20;
 	double LimitVal = 0.0;
 	if (Params->TryGetNumberField(TEXT("limit"), LimitVal))
 	{
@@ -1208,18 +1194,11 @@ FUDBCommandResult FUDBDataTableOps::SearchDatatableContent(const TSharedPtr<FJso
 		ResultEntry->SetStringField(TEXT("row_name"), RowName.ToString());
 		ResultEntry->SetArrayField(TEXT("matches"), Matches);
 
-		// Build preview from requested fields
+		// Build preview from requested fields (pre-serialization filter)
 		if (PreviewFields.Num() > 0)
 		{
-			TSharedPtr<FJsonObject> FullRow = FUDBSerializer::StructToJson(RowStruct, RowData);
-			TSharedRef<FJsonObject> Preview = MakeShared<FJsonObject>();
-			for (const FString& PreviewField : PreviewFields)
-			{
-				if (FullRow.IsValid() && FullRow->HasField(PreviewField))
-				{
-					Preview->SetField(PreviewField, FullRow->TryGetField(PreviewField));
-				}
-			}
+			TSet<FString> PreviewFieldsSet(PreviewFields);
+			TSharedPtr<FJsonObject> Preview = FUDBSerializer::StructToJson(RowStruct, RowData, PreviewFieldsSet);
 			ResultEntry->SetObjectField(TEXT("preview"), Preview);
 		}
 

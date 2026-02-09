@@ -3,6 +3,7 @@
 import json
 import logging
 from ..tcp_client import UEConnection
+from ..response import format_response
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +31,7 @@ def register_gameplay_tag_tools(mcp, connection: UEConnection):
             response = connection.send_command_cached(
                 "list_gameplay_tags", {"prefix": prefix}, ttl=_TTL_LIST
             )
-            return json.dumps(response.get("data", {}), indent=2)
+            return format_response(response.get("data", {}), "list_gameplay_tags")
         except ConnectionError as e:
             return f"Error: {e}"
 
@@ -50,7 +51,7 @@ def register_gameplay_tag_tools(mcp, connection: UEConnection):
         """
         try:
             response = connection.send_command("validate_gameplay_tag", {"tag": tag})
-            return json.dumps(response.get("data", {}), indent=2)
+            return format_response(response.get("data", {}), "validate_gameplay_tag")
         except ConnectionError as e:
             return f"Error: {e}"
 
@@ -86,7 +87,7 @@ def register_gameplay_tag_tools(mcp, connection: UEConnection):
             # Invalidate tag list and catalog caches
             connection.invalidate_cache("list_gameplay_tags:")
             connection.invalidate_cache("get_data_catalog:")
-            return json.dumps(response.get("data", {}), indent=2)
+            return format_response(response.get("data", {}), "register_gameplay_tag")
         except ConnectionError as e:
             return f"Error: {e}"
 
@@ -114,7 +115,7 @@ def register_gameplay_tag_tools(mcp, connection: UEConnection):
             # Invalidate tag list and catalog caches
             connection.invalidate_cache("list_gameplay_tags:")
             connection.invalidate_cache("get_data_catalog:")
-            return json.dumps(response.get("data", {}), indent=2)
+            return format_response(response.get("data", {}), "register_gameplay_tags")
         except json.JSONDecodeError as e:
             return f"Error: Invalid JSON in tags: {e}"
         except ConnectionError as e:

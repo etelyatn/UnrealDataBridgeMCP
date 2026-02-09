@@ -7,16 +7,16 @@ Add new data entries to Unreal Engine.
 
 ## Implementation Steps
 
-1. **Call `get_data_catalog` first** to discover available tables and their structure.
-   Use the catalog's `top_fields` to understand row structure before calling `get_datatable_schema`.
+1. **Check conversation context first.** If you already know the table path and
+   field structure, skip discovery. Only call `get_data_catalog` or `get_datatable_schema`
+   if you genuinely need to discover tables or understand field types.
 
 2. **Parse target type:**
    - `row to table X named Y with {...}` → DataTable row
    - `tag X [with comment]` → GameplayTag
 
 3. **For table rows:**
-   - Use catalog to identify the target table (avoid `list_datatables` separately)
-   - Call `get_datatable_schema` only if you need full type details beyond `top_fields`
+   - If schema unknown, call `get_datatable_schema` for full type details
    - Parse row data:
      - JSON format: `{"Field": "Value", "Number": 42}`
      - Natural language: `Name is "Item" and Damage is 50`
@@ -34,13 +34,11 @@ Add new data entries to Unreal Engine.
 5. **Confirm creation:**
    - Show what was created
    - Report success or errors
-   - For rows, show how to query: `/unreal-data get table X row Y`
 
 ## Usage Patterns
 
 ```
-/data-add row to table /Game/Data/DT_Items.DT_Items named Item_Axe_01 with {"Name": "Iron Axe", "Damage": 40, "Price": 100}
-/data-add row to table /Game/Data/DT_Items.DT_Items named Item_Bow_01 with Name is "Wooden Bow" and Damage is 30
+/data-add row to table /Game/Data/DT_Items.DT_Items named Item_Axe_01 with {"Name": "Iron Axe", "Damage": 40}
 /data-add tag Item.Weapon.Axe
 /data-add tag Item.Weapon.Axe with comment "New weapon type for melee combat"
 ```

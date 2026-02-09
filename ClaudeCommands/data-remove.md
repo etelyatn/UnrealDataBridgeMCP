@@ -7,8 +7,8 @@ Remove data entries from Unreal Engine DataTables.
 
 ## Implementation Steps
 
-1. **Call `get_data_catalog` first** to discover available tables.
-   Use the catalog to identify the correct table path instead of calling `list_datatables` separately.
+1. **Check conversation context first.** If you already know the table path,
+   skip discovery. Only call discovery tools if genuinely needed.
 
 2. **Parse table path and row identifier(s):**
    - `row X from table Y` → single row deletion
@@ -21,7 +21,7 @@ Remove data entries from Unreal Engine DataTables.
    - Call `delete_datatable_row`
 
 4. **For pattern matching:**
-   - Call `query_datatable` with pattern
+   - Call `query_datatable` with pattern and `fields` to keep response small
    - List matching row names
    - Show count of rows to be deleted
    - Ask user to confirm deletion
@@ -37,7 +37,6 @@ Remove data entries from Unreal Engine DataTables.
 ```
 /data-remove row Item_Sword_01 from table /Game/Data/DT_Items.DT_Items
 /data-remove rows matching Test_* from table /Game/Data/DT_Items.DT_Items
-/data-remove rows matching *_OLD from table /Game/Data/DT_Items.DT_Items
 ```
 
 ## Safety
@@ -51,6 +50,6 @@ Remove data entries from Unreal Engine DataTables.
 ## Error Handling
 
 - If row not found, list available row names
-- If table not found, suggest using `get_data_catalog` to find tables
+- If table not found, suggest checking table paths
 - If pattern matches no rows, report and exit
 - If deletion fails, report specific error

@@ -7,8 +7,8 @@ Update data using natural language descriptions.
 
 ## Implementation Steps
 
-1. **Call `get_data_catalog` first** to discover available tables and assets.
-   Use the catalog's `top_fields` and `data_asset_classes` to identify targets.
+1. **Check conversation context first.** If you already know the table path and
+   row structure, skip discovery. Only call discovery tools if genuinely needed.
 
 2. **Parse target type:**
    - `table X row Y set Field to Value` → DataTable row update
@@ -40,8 +40,6 @@ Update data using natural language descriptions.
 ```
 /data-update table /Game/Data/DT_Items.DT_Items row Item_Sword_01 set Damage to 50
 /data-update table /Game/Data/DT_Items.DT_Items row Item_Sword_01 increase Damage by 10
-/data-update table /Game/Data/DT_Items.DT_Items row Item_Sword_01 increase Price by 20%
-/data-update table /Game/Data/DT_Items.DT_Items row Item_Sword_01 decrease Weight by 5%
 /data-update asset /Game/Data/DA_Settings.DA_Settings set MaxPlayers to 8
 ```
 
