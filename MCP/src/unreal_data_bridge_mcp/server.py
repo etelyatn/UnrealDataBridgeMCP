@@ -12,6 +12,7 @@ from .tools.gameplay_tags import register_gameplay_tag_tools
 from .tools.data_assets import register_data_asset_tools
 from .tools.localization import register_localization_tools
 from .tools.assets import register_asset_tools
+from .tools.curve_tables import register_curve_table_tools
 
 _log_level = getattr(logging, os.environ.get("UDB_LOG_LEVEL", "INFO").upper(), logging.INFO)
 logging.basicConfig(
@@ -95,6 +96,7 @@ register_gameplay_tag_tools(mcp, _connection)
 register_data_asset_tools(mcp, _connection)
 register_localization_tools(mcp, _connection)
 register_asset_tools(mcp, _connection)
+register_curve_table_tools(mcp, _connection)
 
 
 def main():

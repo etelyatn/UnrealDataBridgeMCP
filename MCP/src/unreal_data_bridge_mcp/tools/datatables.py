@@ -226,7 +226,7 @@ def register_datatable_tools(mcp, connection: UEConnection):
             return f"Error: {e}"
 
     @mcp.tool()
-    def update_datatable_row(table_path: str, row_name: str, row_data: str) -> str:
+    def update_datatable_row(table_path: str, row_name: str, row_data: str, dry_run: bool = False) -> str:
         """Update an existing row in a DataTable with partial data.
 
         Composite-aware: If table_path points to a CompositeDataTable, the update
@@ -244,10 +244,17 @@ def register_datatable_tools(mcp, connection: UEConnection):
             table_path: Full asset path to the DataTable (can be a composite — auto-resolves).
             row_name: Name of the existing row to update.
             row_data: JSON string with fields to update. Only specified fields are changed.
+            dry_run: If true, preview changes without applying them. Returns 'changes' array with
+                     {field, old_value, new_value} for each modified field. Default: false.
 
         Returns:
-            JSON with success status, modified_fields list, and any warnings.
-            If auto-resolved from a composite, also includes source_table_path and composite_table_path.
+            When dry_run=false (normal mode):
+            - JSON with success status, modified_fields list, and any warnings.
+            - If auto-resolved from a composite, also includes source_table_path and composite_table_path.
+
+            When dry_run=true (preview mode):
+            - JSON with dry_run=true, changes array with {field, old_value, new_value} for each change.
+            - No modifications are applied to the actual DataTable.
         """
         try:
             data = json.loads(row_data)
@@ -255,6 +262,7 @@ def register_datatable_tools(mcp, connection: UEConnection):
                 "table_path": table_path,
                 "row_name": row_name,
                 "row_data": data,
+                "dry_run": dry_run,
             })
             return format_response(response.get("data", {}), "update_datatable_row")
         except json.JSONDecodeError as e:

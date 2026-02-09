@@ -70,7 +70,7 @@ def register_data_asset_tools(mcp, connection: UEConnection):
             return f"Error: {e}"
 
     @mcp.tool()
-    def update_data_asset(asset_path: str, properties: str) -> str:
+    def update_data_asset(asset_path: str, properties: str, dry_run: bool = False) -> str:
         """Update properties on a DataAsset.
 
         Only properties present in the JSON are modified; other properties remain unchanged.
@@ -82,15 +82,23 @@ def register_data_asset_tools(mcp, connection: UEConnection):
             asset_path: Full asset path to the DataAsset.
             properties: JSON string with property names and values to update.
                         Example: '{"DisplayName": "Cyber Arm Mk2", "BaseCost": 5000}'
+            dry_run: If true, preview changes without applying them. Returns 'changes' array with
+                     {field, old_value, new_value} for each modified property. Default: false.
 
         Returns:
-            JSON with success status, modified_fields list, and any warnings.
+            When dry_run=false (normal mode):
+            - JSON with success status, modified_fields list, and any warnings.
+
+            When dry_run=true (preview mode):
+            - JSON with dry_run=true, changes array with {field, old_value, new_value} for each change.
+            - No modifications are applied to the actual DataAsset.
         """
         try:
             props = json.loads(properties)
             response = connection.send_command("update_data_asset", {
                 "asset_path": asset_path,
                 "properties": props,
+                "dry_run": dry_run,
             })
             return format_response(response.get("data", {}), "update_data_asset")
         except json.JSONDecodeError as e:

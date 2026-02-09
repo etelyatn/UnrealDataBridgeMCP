@@ -40,15 +40,24 @@ static bool IsValidTagFormat(const FString& TagString, FString& OutError)
 FUDBCommandResult FUDBGameplayTagOps::ListGameplayTags(const TSharedPtr<FJsonObject>& Params)
 {
 	FString Prefix;
+	bool bIncludeSourceFile = false;
 	if (Params.IsValid())
 	{
 		Params->TryGetStringField(TEXT("prefix"), Prefix);
+		Params->TryGetBoolField(TEXT("include_source_file"), bIncludeSourceFile);
 	}
 
 	UGameplayTagsManager& Manager = UGameplayTagsManager::Get();
 
 	FGameplayTagContainer AllTags;
 	Manager.RequestAllGameplayTags(AllTags, false);
+
+	// Build a set of all tag strings for child lookup
+	TSet<FString> AllTagStrings;
+	for (const FGameplayTag& Tag : AllTags)
+	{
+		AllTagStrings.Add(Tag.ToString());
+	}
 
 	TArray<TSharedPtr<FJsonValue>> TagsArray;
 	for (const FGameplayTag& Tag : AllTags)
@@ -61,6 +70,65 @@ FUDBCommandResult FUDBGameplayTagOps::ListGameplayTags(const TSharedPtr<FJsonObj
 
 		TSharedRef<FJsonObject> TagEntry = MakeShared<FJsonObject>();
 		TagEntry->SetStringField(TEXT("tag"), TagString);
+
+		// Parent tags: split on "." and build parent chain
+		TArray<TSharedPtr<FJsonValue>> ParentTagsArray;
+		TArray<FString> Segments;
+		TagString.ParseIntoArray(Segments, TEXT("."));
+		FString ParentBuilder;
+		for (int32 Index = 0; Index < Segments.Num() - 1; ++Index)
+		{
+			if (Index > 0)
+			{
+				ParentBuilder += TEXT(".");
+			}
+			ParentBuilder += Segments[Index];
+			ParentTagsArray.Add(MakeShared<FJsonValueString>(ParentBuilder));
+		}
+		TagEntry->SetArrayField(TEXT("parent_tags"), ParentTagsArray);
+
+		// Direct child tags: tags that start with "TagString." and have exactly one more segment
+		TArray<TSharedPtr<FJsonValue>> ChildTagsArray;
+		const FString ChildPrefix = TagString + TEXT(".");
+		const int32 ExpectedSegments = Segments.Num() + 1;
+		for (const FString& OtherTag : AllTagStrings)
+		{
+			if (OtherTag.StartsWith(ChildPrefix))
+			{
+				TArray<FString> OtherSegments;
+				OtherTag.ParseIntoArray(OtherSegments, TEXT("."));
+				if (OtherSegments.Num() == ExpectedSegments)
+				{
+					ChildTagsArray.Add(MakeShared<FJsonValueString>(OtherTag));
+				}
+			}
+		}
+		TagEntry->SetArrayField(TEXT("child_tags"), ChildTagsArray);
+
+		// Source file (editor-only, optional)
+#if WITH_EDITORONLY_DATA
+		if (bIncludeSourceFile)
+		{
+			TSharedPtr<FGameplayTagNode> TagNode = Manager.FindTagNode(Tag);
+			if (TagNode.IsValid())
+			{
+				FName FirstSource = TagNode->GetFirstSourceName();
+				if (FirstSource != NAME_None)
+				{
+					const FGameplayTagSource* Source = Manager.FindTagSource(FirstSource);
+					if (Source != nullptr)
+					{
+						TagEntry->SetStringField(TEXT("source_file"), Source->GetConfigFileName());
+					}
+					else
+					{
+						TagEntry->SetStringField(TEXT("source_name"), FirstSource.ToString());
+					}
+				}
+			}
+		}
+#endif
+
 		TagsArray.Add(MakeShared<FJsonValueObject>(TagEntry));
 	}
 

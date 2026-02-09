@@ -6,6 +6,8 @@
 #include "Internationalization/StringTableCore.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
+#include "ScopedTransaction.h"
+#include "UDBEditorUtils.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogUDBLocalizationOps, Log, All);
 
@@ -166,8 +168,14 @@ FUDBCommandResult FUDBLocalizationOps::SetTranslation(const TSharedPtr<FJsonObje
 		return LoadError;
 	}
 
+	FScopedTransaction Transaction(FText::FromString(
+		FString::Printf(TEXT("UDB: Set Translation '%s' in '%s'"), *Key, *StringTable->GetName())
+	));
+	StringTable->Modify();
+
 	StringTable->GetMutableStringTable()->SetSourceString(Key, Text);
 	StringTable->MarkPackageDirty();
+	FUDBEditorUtils::NotifyAssetModified(StringTable);
 
 	UE_LOG(LogUDBLocalizationOps, Log, TEXT("Set translation key '%s' in '%s'"), *Key, *TablePath);
 

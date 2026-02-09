@@ -14,23 +14,34 @@ def register_gameplay_tag_tools(mcp, connection: UEConnection):
     """Register all GameplayTag-related MCP tools."""
 
     @mcp.tool()
-    def list_gameplay_tags(prefix: str = "") -> str:
+    def list_gameplay_tags(prefix: str = "", include_source_file: bool = False) -> str:
         """List all registered GameplayTags, optionally filtered by prefix.
+
+        Each tag entry includes parent_tags (ancestor chain) and child_tags (direct children).
+        Use include_source_file=True to also get the .ini file that defines each tag.
 
         Use validate_gameplay_tag to check if a specific tag exists.
 
         Args:
             prefix: Only return tags starting with this prefix (e.g., 'Quest.', 'Patient.Type.').
+            include_source_file: If true, include the source .ini file path for each tag.
 
         Returns:
             JSON with:
-            - tags: Array of tag strings
+            - tags: Array of {tag, parent_tags[], child_tags[], source_file?}
             - count: Total number of matching tags
         """
         try:
-            response = connection.send_command_cached(
-                "list_gameplay_tags", {"prefix": prefix}, ttl=_TTL_LIST
-            )
+            params = {"prefix": prefix}
+            if include_source_file:
+                params["include_source_file"] = True
+            # Don't cache when requesting source files (less common, more dynamic)
+            if include_source_file:
+                response = connection.send_command("list_gameplay_tags", params)
+            else:
+                response = connection.send_command_cached(
+                    "list_gameplay_tags", params, ttl=_TTL_LIST
+                )
             return format_response(response.get("data", {}), "list_gameplay_tags")
         except ConnectionError as e:
             return f"Error: {e}"

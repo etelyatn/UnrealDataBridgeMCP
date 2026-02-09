@@ -13,6 +13,7 @@ public class UnrealDataBridgeTests : ModuleRules
 			"CoreUObject",
 			"Engine",
 			"UnrealDataBridge",
+			"UnrealEd",
 			"Sockets",
 			"Networking",
 			"Json",

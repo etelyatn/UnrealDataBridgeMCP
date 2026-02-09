@@ -5,6 +5,7 @@
 #include "Operations/UDBDataAssetOps.h"
 #include "Operations/UDBLocalizationOps.h"
 #include "Operations/UDBAssetSearchOps.h"
+#include "Operations/UDBCurveTableOps.h"
 #include "Misc/EngineVersion.h"
 #include "Misc/App.h"
 #include "AssetRegistry/IAssetRegistry.h"
@@ -112,6 +113,18 @@ FUDBCommandResult FUDBCommandHandler::Execute(const FString& Command, const TSha
 	else if (Command == TEXT("search_assets"))
 	{
 		return FUDBAssetSearchOps::SearchAssets(Params);
+	}
+	else if (Command == TEXT("list_curve_tables"))
+	{
+		return FUDBCurveTableOps::ListCurveTables(Params);
+	}
+	else if (Command == TEXT("get_curve_table"))
+	{
+		return FUDBCurveTableOps::GetCurveTable(Params);
+	}
+	else if (Command == TEXT("update_curve_table_row"))
+	{
+		return FUDBCurveTableOps::UpdateCurveTableRow(Params);
 	}
 	else if (Command == TEXT("resolve_tags"))
 	{

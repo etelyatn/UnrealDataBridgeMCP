@@ -17,6 +17,8 @@
 #include "AssetRegistry/IAssetRegistry.h"
 #include "AssetRegistry/AssetData.h"
 #include "Engine/DataAsset.h"
+#include "ScopedTransaction.h"
+#include "UDBEditorUtils.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogUDBDataTableOps, Log, All);
 
@@ -509,12 +511,18 @@ FUDBCommandResult FUDBDataTableOps::AddDatatableRow(const TSharedPtr<FJsonObject
 		);
 	}
 
+	FScopedTransaction Transaction(FText::FromString(
+		FString::Printf(TEXT("UDB: Add Row '%s' to '%s'"), *RowName, *DataTable->GetName())
+	));
+	DataTable->Modify();
+
 	DataTable->AddRow(RowFName, RowMemory, RowStruct);
 
 	RowStruct->DestroyStruct(RowMemory);
 	FMemory::Free(RowMemory);
 
 	DataTable->MarkPackageDirty();
+	FUDBEditorUtils::NotifyAssetModified(DataTable);
 
 	TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
 	Data->SetStringField(TEXT("row_name"), RowName);
@@ -558,6 +566,12 @@ FUDBCommandResult FUDBDataTableOps::UpdateDatatableRow(const TSharedPtr<FJsonObj
 			UDBErrorCodes::InvalidField,
 			TEXT("Missing required param: row_data")
 		);
+	}
+
+	bool bDryRun = false;
+	if (Params.IsValid())
+	{
+		Params->TryGetBoolField(TEXT("dry_run"), bDryRun);
 	}
 
 	FUDBCommandResult LoadError;
@@ -606,6 +620,13 @@ FUDBCommandResult FUDBDataTableOps::UpdateDatatableRow(const TSharedPtr<FJsonObj
 		);
 	}
 
+	// Capture old values for dry_run diff
+	TSharedPtr<FJsonObject> OldValues;
+	if (bDryRun)
+	{
+		OldValues = FUDBSerializer::StructToJson(RowStruct, RowPtr);
+	}
+
 	// Track which fields were modified
 	TArray<FString> ModifiedFields;
 	for (const auto& Pair : (*RowData)->Values)
@@ -613,7 +634,81 @@ FUDBCommandResult FUDBDataTableOps::UpdateDatatableRow(const TSharedPtr<FJsonObj
 		ModifiedFields.Add(Pair.Key);
 	}
 
+	// For dry_run, deserialize to temp copy; otherwise apply directly
 	TArray<FString> Warnings;
+	if (bDryRun)
+	{
+		uint8* TempRowPtr = static_cast<uint8*>(FMemory::Malloc(RowStruct->GetStructureSize(), RowStruct->GetMinAlignment()));
+		RowStruct->InitializeStruct(TempRowPtr);
+
+		// Copy current values to temp
+		RowStruct->CopyScriptStruct(TempRowPtr, RowPtr);
+
+		bool bDeserializeSuccess = FUDBSerializer::JsonToStruct(*RowData, RowStruct, TempRowPtr, Warnings);
+
+		if (!bDeserializeSuccess)
+		{
+			RowStruct->DestroyStruct(TempRowPtr);
+			FMemory::Free(TempRowPtr);
+			return FUDBCommandHandler::Error(
+				UDBErrorCodes::SerializationError,
+				TEXT("Failed to deserialize row_data into existing row")
+			);
+		}
+
+		// Compute diff
+		TArray<TSharedPtr<FJsonValue>> ChangesArray;
+		TSharedPtr<FJsonObject> NewValues = FUDBSerializer::StructToJson(RowStruct, TempRowPtr);
+
+		for (const FString& Field : ModifiedFields)
+		{
+			const TSharedPtr<FJsonValue>* OldVal = OldValues.IsValid() ? OldValues->Values.Find(Field) : nullptr;
+			const TSharedPtr<FJsonValue>* NewVal = NewValues.IsValid() ? NewValues->Values.Find(Field) : nullptr;
+
+			TSharedRef<FJsonObject> ChangeEntry = MakeShared<FJsonObject>();
+			ChangeEntry->SetStringField(TEXT("field"), Field);
+
+			if (OldVal != nullptr && (*OldVal).IsValid())
+			{
+				ChangeEntry->SetField(TEXT("old_value"), *OldVal);
+			}
+			if (NewVal != nullptr && (*NewVal).IsValid())
+			{
+				ChangeEntry->SetField(TEXT("new_value"), *NewVal);
+			}
+
+			ChangesArray.Add(MakeShared<FJsonValueObject>(ChangeEntry));
+		}
+
+		RowStruct->DestroyStruct(TempRowPtr);
+		FMemory::Free(TempRowPtr);
+
+		TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
+		Data->SetBoolField(TEXT("dry_run"), true);
+		Data->SetStringField(TEXT("row_name"), RowName);
+		Data->SetArrayField(TEXT("changes"), ChangesArray);
+
+		if (Warnings.Num() > 0)
+		{
+			TArray<TSharedPtr<FJsonValue>> WarningsArray;
+			for (const FString& Warning : Warnings)
+			{
+				WarningsArray.Add(MakeShared<FJsonValueString>(Warning));
+			}
+			Data->SetArrayField(TEXT("warnings"), WarningsArray);
+		}
+
+		FUDBCommandResult Result = FUDBCommandHandler::Success(Data);
+		Result.Warnings = MoveTemp(Warnings);
+		return Result;
+	}
+
+	// Normal (non-dry_run) path: apply changes
+	FScopedTransaction Transaction(FText::FromString(
+		FString::Printf(TEXT("UDB: Update Row '%s' in '%s'"), *RowName, *DataTable->GetName())
+	));
+	DataTable->Modify();
+
 	bool bDeserializeSuccess = FUDBSerializer::JsonToStruct(*RowData, RowStruct, RowPtr, Warnings);
 
 	if (!bDeserializeSuccess)
@@ -626,6 +721,7 @@ FUDBCommandResult FUDBDataTableOps::UpdateDatatableRow(const TSharedPtr<FJsonObj
 
 	DataTable->HandleDataTableChanged(RowFName);
 	DataTable->MarkPackageDirty();
+	FUDBEditorUtils::NotifyAssetModified(DataTable);
 
 	TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
 	Data->SetStringField(TEXT("row_name"), RowName);
@@ -711,8 +807,14 @@ FUDBCommandResult FUDBDataTableOps::DeleteDatatableRow(const TSharedPtr<FJsonObj
 		);
 	}
 
+	FScopedTransaction Transaction(FText::FromString(
+		FString::Printf(TEXT("UDB: Delete Row '%s' from '%s'"), *RowName, *DataTable->GetName())
+	));
+	DataTable->Modify();
+
 	DataTable->RemoveRow(RowFName);
 	DataTable->MarkPackageDirty();
+	FUDBEditorUtils::NotifyAssetModified(DataTable);
 
 	TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
 	Data->SetStringField(TEXT("row_name"), RowName);
@@ -787,6 +889,16 @@ FUDBCommandResult FUDBDataTableOps::ImportDatatableJson(const TSharedPtr<FJsonOb
 			UDBErrorCodes::InvalidStructType,
 			FString::Printf(TEXT("DataTable has no row struct: %s"), *TablePath)
 		);
+	}
+
+	// Wrap entire import in a single undo transaction (skip for dry_run)
+	TOptional<FScopedTransaction> Transaction;
+	if (!bDryRun)
+	{
+		Transaction.Emplace(FText::FromString(
+			FString::Printf(TEXT("UDB: Import %d rows into '%s' (mode: %s)"), RowsArray->Num(), *DataTable->GetName(), *Mode)
+		));
+		DataTable->Modify();
 	}
 
 	if (Mode == TEXT("replace") && !bDryRun)
@@ -924,6 +1036,7 @@ FUDBCommandResult FUDBDataTableOps::ImportDatatableJson(const TSharedPtr<FJsonOb
 	if (!bDryRun)
 	{
 		DataTable->MarkPackageDirty();
+	FUDBEditorUtils::NotifyAssetModified(DataTable);
 	}
 
 	TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();

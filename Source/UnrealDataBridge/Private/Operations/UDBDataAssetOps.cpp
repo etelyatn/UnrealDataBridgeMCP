@@ -6,6 +6,8 @@
 #include "AssetRegistry/AssetData.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
+#include "ScopedTransaction.h"
+#include "UDBEditorUtils.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogUDBDataAssetOps, Log, All);
 
@@ -145,6 +147,12 @@ FUDBCommandResult FUDBDataAssetOps::UpdateDataAsset(const TSharedPtr<FJsonObject
 		);
 	}
 
+	bool bDryRun = false;
+	if (Params.IsValid())
+	{
+		Params->TryGetBoolField(TEXT("dry_run"), bDryRun);
+	}
+
 	FUDBCommandResult LoadError;
 	UDataAsset* DataAsset = LoadDataAsset(AssetPath, LoadError);
 	if (DataAsset == nullptr)
@@ -161,41 +169,134 @@ FUDBCommandResult FUDBDataAssetOps::UpdateDataAsset(const TSharedPtr<FJsonObject
 		ModifiedFields.Add(Pair.Key);
 	}
 
-	TArray<FString> Warnings;
-	bool bDeserializeSuccess = FUDBSerializer::JsonToStruct(*PropertiesObj, AssetClass, DataAsset, Warnings);
-
-	if (!bDeserializeSuccess)
+	if (bDryRun)
 	{
-		return FUDBCommandHandler::Error(
-			UDBErrorCodes::SerializationError,
-			TEXT("Failed to deserialize properties into DataAsset")
-		);
-	}
+		// Dry-run mode: preview changes without applying them
+		TSharedPtr<FJsonObject> OldValues = FUDBSerializer::StructToJson(AssetClass, DataAsset);
 
-	DataAsset->MarkPackageDirty();
-
-	TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
-	Data->SetBoolField(TEXT("success"), true);
-	Data->SetStringField(TEXT("asset_path"), AssetPath);
-
-	TArray<TSharedPtr<FJsonValue>> ModifiedFieldsArray;
-	for (const FString& Field : ModifiedFields)
-	{
-		ModifiedFieldsArray.Add(MakeShared<FJsonValueString>(Field));
-	}
-	Data->SetArrayField(TEXT("modified_fields"), ModifiedFieldsArray);
-
-	if (Warnings.Num() > 0)
-	{
-		TArray<TSharedPtr<FJsonValue>> WarningsArray;
-		for (const FString& Warning : Warnings)
+		// Create temp object of same class
+		UDataAsset* TempAsset = NewObject<UDataAsset>(GetTransientPackage(), AssetClass, NAME_None, RF_Transient);
+		if (TempAsset == nullptr)
 		{
-			WarningsArray.Add(MakeShared<FJsonValueString>(Warning));
+			return FUDBCommandHandler::Error(
+				UDBErrorCodes::SerializationError,
+				TEXT("Failed to create temporary DataAsset for dry-run preview")
+			);
 		}
-		Data->SetArrayField(TEXT("warnings"), WarningsArray);
-	}
 
-	FUDBCommandResult Result = FUDBCommandHandler::Success(Data);
-	Result.Warnings = MoveTemp(Warnings);
-	return Result;
+		// Copy current values to temp
+		AssetClass->CopyScriptStruct(TempAsset, DataAsset);
+
+		TArray<FString> Warnings;
+		bool bDeserializeSuccess = FUDBSerializer::JsonToStruct(*PropertiesObj, AssetClass, TempAsset, Warnings);
+
+		if (!bDeserializeSuccess)
+		{
+			return FUDBCommandHandler::Error(
+				UDBErrorCodes::SerializationError,
+				TEXT("Failed to deserialize properties for dry-run preview")
+			);
+		}
+
+		// Capture new values from temp asset
+		TSharedPtr<FJsonObject> NewValues = FUDBSerializer::StructToJson(AssetClass, TempAsset);
+
+		// Compute diffs
+		TArray<TSharedPtr<FJsonValue>> ChangesArray;
+		for (const FString& Field : ModifiedFields)
+		{
+			if (NewValues.IsValid() && OldValues.IsValid())
+			{
+				TSharedPtr<FJsonValue> OldValue = OldValues->TryGetField(Field);
+				TSharedPtr<FJsonValue> NewValue = NewValues->TryGetField(Field);
+
+				TSharedRef<FJsonObject> Change = MakeShared<FJsonObject>();
+				Change->SetStringField(TEXT("field"), Field);
+				if (OldValue.IsValid())
+				{
+					Change->SetField(TEXT("old_value"), OldValue);
+				}
+				else
+				{
+					Change->SetNullField(TEXT("old_value"));
+				}
+				if (NewValue.IsValid())
+				{
+					Change->SetField(TEXT("new_value"), NewValue);
+				}
+				else
+				{
+					Change->SetNullField(TEXT("new_value"));
+				}
+				ChangesArray.Add(MakeShared<FJsonValueObject>(Change));
+			}
+		}
+
+		TempAsset->MarkAsGarbage();
+
+		TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
+		Data->SetBoolField(TEXT("dry_run"), true);
+		Data->SetStringField(TEXT("asset_path"), AssetPath);
+		Data->SetArrayField(TEXT("changes"), ChangesArray);
+		Data->SetNumberField(TEXT("change_count"), ChangesArray.Num());
+
+		if (Warnings.Num() > 0)
+		{
+			TArray<TSharedPtr<FJsonValue>> WarningsArray;
+			for (const FString& Warning : Warnings)
+			{
+				WarningsArray.Add(MakeShared<FJsonValueString>(Warning));
+			}
+			Data->SetArrayField(TEXT("warnings"), WarningsArray);
+		}
+
+		return FUDBCommandHandler::Success(Data);
+	}
+	else
+	{
+		// Normal mode: apply changes to actual asset
+		FScopedTransaction Transaction(FText::FromString(
+			FString::Printf(TEXT("UDB: Update DataAsset '%s'"), *DataAsset->GetName())
+		));
+		DataAsset->Modify();
+
+		TArray<FString> Warnings;
+		bool bDeserializeSuccess = FUDBSerializer::JsonToStruct(*PropertiesObj, AssetClass, DataAsset, Warnings);
+
+		if (!bDeserializeSuccess)
+		{
+			return FUDBCommandHandler::Error(
+				UDBErrorCodes::SerializationError,
+				TEXT("Failed to deserialize properties into DataAsset")
+			);
+		}
+
+		DataAsset->MarkPackageDirty();
+		FUDBEditorUtils::NotifyAssetModified(DataAsset);
+
+		TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
+		Data->SetBoolField(TEXT("success"), true);
+		Data->SetStringField(TEXT("asset_path"), AssetPath);
+
+		TArray<TSharedPtr<FJsonValue>> ModifiedFieldsArray;
+		for (const FString& Field : ModifiedFields)
+		{
+			ModifiedFieldsArray.Add(MakeShared<FJsonValueString>(Field));
+		}
+		Data->SetArrayField(TEXT("modified_fields"), ModifiedFieldsArray);
+
+		if (Warnings.Num() > 0)
+		{
+			TArray<TSharedPtr<FJsonValue>> WarningsArray;
+			for (const FString& Warning : Warnings)
+			{
+				WarningsArray.Add(MakeShared<FJsonValueString>(Warning));
+			}
+			Data->SetArrayField(TEXT("warnings"), WarningsArray);
+		}
+
+		FUDBCommandResult Result = FUDBCommandHandler::Success(Data);
+		Result.Warnings = MoveTemp(Warnings);
+		return Result;
+	}
 }
