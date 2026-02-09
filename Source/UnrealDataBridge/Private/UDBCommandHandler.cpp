@@ -1,4 +1,3 @@
-// Copyright Eugene Telyatnik. All Rights Reserved. https://github.com/etelyatn/UnrealDataBridgeMCP
 
 #include "UDBCommandHandler.h"
 #include "Operations/UDBDataTableOps.h"

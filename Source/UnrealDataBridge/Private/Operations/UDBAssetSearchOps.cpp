@@ -1,4 +1,3 @@
-// Copyright Eugene Telyatnik. All Rights Reserved. https://github.com/etelyatn/UnrealDataBridgeMCP
 
 #include "Operations/UDBAssetSearchOps.h"
 #include "AssetRegistry/IAssetRegistry.h"
