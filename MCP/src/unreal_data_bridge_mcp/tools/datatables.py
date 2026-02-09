@@ -264,6 +264,60 @@ def register_datatable_tools(mcp, connection: UEConnection):
             return f"Error: {e}"
 
     @mcp.tool()
+    def search_datatable_content(
+        table_path: str,
+        search_text: str,
+        fields: str = "",
+        preview_fields: str = "",
+        limit: int = 50,
+    ) -> str:
+        """Search inside DataTable row field values for a case-insensitive substring match.
+
+        Searches all string-like fields (FString, FName, FText) including one level of nested
+        structs. For FText fields, searches the source/invariant string (English during dev).
+        Works with both regular and CompositeDataTables (composites search all aggregated rows).
+
+        Use this instead of query_datatable when row names are generic (e.g., 'GenericOrder_1')
+        and you need to find rows by their content. Prefer composite tables (e.g., CQT_Quests)
+        for broad searches across multiple source tables.
+
+        Args:
+            table_path: Full asset path to the DataTable or CompositeDataTable.
+            search_text: Case-insensitive substring to search for in string field values.
+            fields: Optional comma-separated field names to restrict the search to.
+                    Supports dot-paths for nested structs (e.g., 'Message.BodyText').
+                    Leave empty to search all string-like fields.
+            preview_fields: Optional comma-separated field names to include in each result
+                            for context (e.g., 'QuestTag,QuestType'). Top-level fields only.
+            limit: Maximum number of matching rows to return (default: 50).
+
+        Returns:
+            JSON with:
+            - table_path: The searched table
+            - search_text: The search term used
+            - total_matches: Number of matching rows found (capped at limit)
+            - limit: Applied limit
+            - results: Array of matching rows, each with:
+              - row_name: The row key
+              - matches: Array of {field, value} for each matching field
+              - preview: (if preview_fields specified) Object with requested field values
+        """
+        try:
+            params = {
+                "table_path": table_path,
+                "search_text": search_text,
+                "limit": limit,
+            }
+            if fields:
+                params["fields"] = [f.strip() for f in fields.split(",")]
+            if preview_fields:
+                params["preview_fields"] = [f.strip() for f in preview_fields.split(",")]
+            response = connection.send_command("search_datatable_content", params)
+            return json.dumps(response.get("data", {}), indent=2)
+        except ConnectionError as e:
+            return f"Error: {e}"
+
+    @mcp.tool()
     def import_datatable_json(table_path: str, rows: str, mode: str = "create", dry_run: bool = False) -> str:
         """Bulk import rows into a DataTable.
 

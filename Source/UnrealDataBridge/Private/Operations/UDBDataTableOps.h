@@ -19,6 +19,7 @@ public:
 	static FUDBCommandResult UpdateDatatableRow(const TSharedPtr<FJsonObject>& Params);
 	static FUDBCommandResult DeleteDatatableRow(const TSharedPtr<FJsonObject>& Params);
 	static FUDBCommandResult ImportDatatableJson(const TSharedPtr<FJsonObject>& Params);
+	static FUDBCommandResult SearchDatatableContent(const TSharedPtr<FJsonObject>& Params);
 
 private:
 	/** Load a DataTable by asset path, returns nullptr and sets OutError if not found */

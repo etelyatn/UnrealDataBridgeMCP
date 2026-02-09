@@ -4,8 +4,13 @@
 #include "Engine/DataTable.h"
 #include "Engine/CompositeDataTable.h"
 #include "UObject/UObjectIterator.h"
+#include "UObject/TextProperty.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
+#include "GameplayTagContainer.h"
+#include "StructUtils/InstancedStruct.h"
+#include "UObject/SoftObjectPath.h"
+#include "Internationalization/Text.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogUDBDataTableOps, Log, All);
 
@@ -979,6 +984,248 @@ FUDBCommandResult FUDBDataTableOps::GetStructSchema(const TSharedPtr<FJsonObject
 		}
 		Data->SetArrayField(TEXT("subtypes"), SubtypeSchemas);
 	}
+
+	return FUDBCommandHandler::Success(Data);
+}
+
+/** Recursively search struct fields for a substring match. Appends matching {field, value} pairs. */
+static void SearchRowFields(
+	const UStruct* StructType,
+	const void* StructData,
+	const FString& SearchText,
+	const TSet<FString>& FieldFilter,
+	const FString& FieldPrefix,
+	TArray<TSharedPtr<FJsonValue>>& OutMatches)
+{
+	for (TFieldIterator<FProperty> It(StructType); It; ++It)
+	{
+		const FProperty* Property = *It;
+		const void* ValuePtr = Property->ContainerPtrToValuePtr<void>(StructData);
+		const FString FieldPath = FieldPrefix.IsEmpty()
+			? Property->GetName()
+			: FieldPrefix + TEXT(".") + Property->GetName();
+
+		// If field filter is set, skip fields that don't match
+		if (FieldFilter.Num() > 0 && !FieldFilter.Contains(FieldPath) && !FieldFilter.Contains(Property->GetName()))
+		{
+			// Still recurse into structs if any filter path starts with this prefix
+			if (const FStructProperty* StructProp = CastField<FStructProperty>(Property))
+			{
+				bool bHasChildMatch = false;
+				const FString Prefix = FieldPath + TEXT(".");
+				for (const FString& Filter : FieldFilter)
+				{
+					if (Filter.StartsWith(Prefix))
+					{
+						bHasChildMatch = true;
+						break;
+					}
+				}
+				if (bHasChildMatch)
+				{
+					const UScriptStruct* InnerStruct = StructProp->Struct;
+					if (InnerStruct != FGameplayTag::StaticStruct()
+						&& InnerStruct != TBaseStructure<FSoftObjectPath>::Get()
+						&& InnerStruct != FInstancedStruct::StaticStruct())
+					{
+						SearchRowFields(InnerStruct, ValuePtr, SearchText, FieldFilter, FieldPath, OutMatches);
+					}
+				}
+			}
+			continue;
+		}
+
+		// Check FText
+		if (const FTextProperty* TextProp = CastField<FTextProperty>(Property))
+		{
+			const FText& TextVal = TextProp->GetPropertyValue(ValuePtr);
+			const FString* SourceString = FTextInspector::GetSourceString(TextVal);
+			FString StringToSearch = (SourceString != nullptr && !SourceString->IsEmpty())
+				? *SourceString
+				: TextVal.ToString();
+
+			if (StringToSearch.Contains(SearchText, ESearchCase::IgnoreCase))
+			{
+				TSharedRef<FJsonObject> Match = MakeShared<FJsonObject>();
+				Match->SetStringField(TEXT("field"), FieldPath);
+				Match->SetStringField(TEXT("value"), StringToSearch);
+				OutMatches.Add(MakeShared<FJsonValueObject>(Match));
+			}
+			continue;
+		}
+
+		// Check FString
+		if (const FStrProperty* StrProp = CastField<FStrProperty>(Property))
+		{
+			const FString& StringVal = StrProp->GetPropertyValue(ValuePtr);
+			if (StringVal.Contains(SearchText, ESearchCase::IgnoreCase))
+			{
+				TSharedRef<FJsonObject> Match = MakeShared<FJsonObject>();
+				Match->SetStringField(TEXT("field"), FieldPath);
+				Match->SetStringField(TEXT("value"), StringVal);
+				OutMatches.Add(MakeShared<FJsonValueObject>(Match));
+			}
+			continue;
+		}
+
+		// Check FName
+		if (const FNameProperty* NameProp = CastField<FNameProperty>(Property))
+		{
+			const FString NameStr = NameProp->GetPropertyValue(ValuePtr).ToString();
+			if (NameStr.Contains(SearchText, ESearchCase::IgnoreCase))
+			{
+				TSharedRef<FJsonObject> Match = MakeShared<FJsonObject>();
+				Match->SetStringField(TEXT("field"), FieldPath);
+				Match->SetStringField(TEXT("value"), NameStr);
+				OutMatches.Add(MakeShared<FJsonValueObject>(Match));
+			}
+			continue;
+		}
+
+		// Recurse into nested structs (skip GameplayTag, SoftObjectPath, InstancedStruct)
+		if (const FStructProperty* StructProp = CastField<FStructProperty>(Property))
+		{
+			const UScriptStruct* InnerStruct = StructProp->Struct;
+			if (InnerStruct != FGameplayTag::StaticStruct()
+				&& InnerStruct != TBaseStructure<FSoftObjectPath>::Get()
+				&& InnerStruct != FInstancedStruct::StaticStruct())
+			{
+				SearchRowFields(InnerStruct, ValuePtr, SearchText, FieldFilter, FieldPath, OutMatches);
+			}
+		}
+	}
+}
+
+FUDBCommandResult FUDBDataTableOps::SearchDatatableContent(const TSharedPtr<FJsonObject>& Params)
+{
+	FString TablePath;
+	if (!Params.IsValid() || !Params->TryGetStringField(TEXT("table_path"), TablePath))
+	{
+		return FUDBCommandHandler::Error(
+			UDBErrorCodes::InvalidField,
+			TEXT("Missing required param: table_path")
+		);
+	}
+
+	FString SearchText;
+	if (!Params->TryGetStringField(TEXT("search_text"), SearchText) || SearchText.IsEmpty())
+	{
+		return FUDBCommandHandler::Error(
+			UDBErrorCodes::InvalidValue,
+			TEXT("Missing or empty required param: search_text")
+		);
+	}
+
+	FUDBCommandResult LoadError;
+	UDataTable* DataTable = LoadDataTable(TablePath, LoadError);
+	if (DataTable == nullptr)
+	{
+		return LoadError;
+	}
+
+	const UScriptStruct* RowStruct = DataTable->GetRowStruct();
+	if (RowStruct == nullptr)
+	{
+		return FUDBCommandHandler::Error(
+			UDBErrorCodes::InvalidStructType,
+			FString::Printf(TEXT("DataTable has no row struct: %s"), *TablePath)
+		);
+	}
+
+	// Parse optional fields filter
+	TSet<FString> FieldFilter;
+	const TArray<TSharedPtr<FJsonValue>>* FieldsArray = nullptr;
+	if (Params->TryGetArrayField(TEXT("fields"), FieldsArray) && FieldsArray != nullptr)
+	{
+		for (const TSharedPtr<FJsonValue>& FieldValue : *FieldsArray)
+		{
+			FString FieldName;
+			if (FieldValue.IsValid() && FieldValue->TryGetString(FieldName))
+			{
+				FieldFilter.Add(FieldName);
+			}
+		}
+	}
+
+	// Parse optional preview_fields
+	TArray<FString> PreviewFields;
+	const TArray<TSharedPtr<FJsonValue>>* PreviewArray = nullptr;
+	if (Params->TryGetArrayField(TEXT("preview_fields"), PreviewArray) && PreviewArray != nullptr)
+	{
+		for (const TSharedPtr<FJsonValue>& FieldValue : *PreviewArray)
+		{
+			FString FieldName;
+			if (FieldValue.IsValid() && FieldValue->TryGetString(FieldName))
+			{
+				PreviewFields.Add(FieldName);
+			}
+		}
+	}
+
+	// Parse limit
+	int32 Limit = 50;
+	double LimitVal = 0.0;
+	if (Params->TryGetNumberField(TEXT("limit"), LimitVal))
+	{
+		Limit = FMath::Max(1, static_cast<int32>(LimitVal));
+	}
+
+	// Search all rows
+	TArray<FName> RowNames = DataTable->GetRowNames();
+	TArray<TSharedPtr<FJsonValue>> ResultsArray;
+	int32 TotalMatches = 0;
+
+	for (const FName& RowName : RowNames)
+	{
+		if (TotalMatches >= Limit)
+		{
+			break;
+		}
+
+		const void* RowData = DataTable->FindRowUnchecked(RowName);
+		if (RowData == nullptr)
+		{
+			continue;
+		}
+
+		TArray<TSharedPtr<FJsonValue>> Matches;
+		SearchRowFields(RowStruct, RowData, SearchText, FieldFilter, FString(), Matches);
+
+		if (Matches.Num() == 0)
+		{
+			continue;
+		}
+
+		++TotalMatches;
+
+		TSharedRef<FJsonObject> ResultEntry = MakeShared<FJsonObject>();
+		ResultEntry->SetStringField(TEXT("row_name"), RowName.ToString());
+		ResultEntry->SetArrayField(TEXT("matches"), Matches);
+
+		// Build preview from requested fields
+		if (PreviewFields.Num() > 0)
+		{
+			TSharedPtr<FJsonObject> FullRow = FUDBSerializer::StructToJson(RowStruct, RowData);
+			TSharedRef<FJsonObject> Preview = MakeShared<FJsonObject>();
+			for (const FString& PreviewField : PreviewFields)
+			{
+				if (FullRow.IsValid() && FullRow->HasField(PreviewField))
+				{
+					Preview->SetField(PreviewField, FullRow->TryGetField(PreviewField));
+				}
+			}
+			ResultEntry->SetObjectField(TEXT("preview"), Preview);
+		}
+
+		ResultsArray.Add(MakeShared<FJsonValueObject>(ResultEntry));
+	}
+
+	TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
+	Data->SetStringField(TEXT("table_path"), TablePath);
+	Data->SetStringField(TEXT("search_text"), SearchText);
+	Data->SetNumberField(TEXT("total_matches"), TotalMatches);
+	Data->SetNumberField(TEXT("limit"), Limit);
+	Data->SetArrayField(TEXT("results"), ResultsArray);
 
 	return FUDBCommandHandler::Success(Data);
 }

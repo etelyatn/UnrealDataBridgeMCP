@@ -61,6 +61,10 @@ FUDBCommandResult FUDBCommandHandler::Execute(const FString& Command, const TSha
 	{
 		return FUDBDataTableOps::ImportDatatableJson(Params);
 	}
+	else if (Command == TEXT("search_datatable_content"))
+	{
+		return FUDBDataTableOps::SearchDatatableContent(Params);
+	}
 	else if (Command == TEXT("list_gameplay_tags"))
 	{
 		return FUDBGameplayTagOps::ListGameplayTags(Params);
