@@ -13,7 +13,7 @@ Bridge AI tools to Unreal Engine's data systems via the Model Context Protocol.
 
 The bridge has two components:
 
-1. **UE C++ Editor Plugin** -- A TCP server (default port 8742) running inside Unreal Editor that exposes DataTables, GameplayTags, DataAssets, and StringTables via JSON commands over a persistent TCP connection.
+1. **UE C++ Editor Plugin** -- A TCP server (default port 8742) running inside Unreal Editor that exposes DataTables, CurveTables, GameplayTags, DataAssets, and StringTables via JSON commands over a persistent TCP connection.
 2. **Python MCP Server** -- A FastMCP server using stdio transport that translates MCP tool calls from AI coding assistants into TCP commands sent to the editor plugin.
 
 ```
@@ -177,43 +177,48 @@ All write operations include full editor integration out of the box:
 - **Editor Notifications** -- After writes, the plugin broadcasts `PostEditChange` events so editor UI (property panels, asset browsers, DataTable viewers) refreshes automatically.
 - **Dry-Run Preview** -- `update_datatable_row` and `update_data_asset` accept a `dry_run` parameter. When `true`, returns a diff of `{field, old_value, new_value}` for each change without modifying the actual asset.
 
-## Available Tools (26)
+## Available Tools (29)
 
-### Status & Discovery
+### Status & Discovery (3)
 
 | Tool | Description |
 |------|-------------|
 | `get_status` | Check connection to Unreal Editor and get plugin version, engine version, project name |
-| `get_data_catalog` | **Call this first.** Returns a compact overview of all DataTables, tag prefixes, DataAsset classes, and StringTables in one call |
+| `get_data_catalog` | **Call this first.** Compact overview of all DataTables, tag prefixes, DataAsset classes, and StringTables |
 | `refresh_cache` | Clear all cached MCP responses and force fresh reads from Unreal Editor |
 
-### DataTables (9)
+### DataTables (12)
+
+All DataTable tools are **CompositeDataTable-aware**: composites are flagged in list results, and write operations auto-resolve to the correct source table.
 
 | Tool | Description |
 |------|-------------|
-| `list_datatables` | List all loaded DataTables with name, path, row struct, and row count |
+| `list_datatables` | List all DataTables with name, path, row struct, row count, and composite/parent info |
 | `get_datatable_schema` | Get row struct schema showing fields, types, and constraints |
+| `get_struct_schema` | Get schema for any UStruct type by name (useful for TInstancedStruct subtypes) |
 | `query_datatable` | Query rows with wildcard filtering, field selection, and pagination |
 | `get_datatable_row` | Get a specific row by row name |
-| `get_struct_schema` | Get schema for any UStruct type by name |
+| `search_datatable_content` | Full-text search inside row field values (FString, FName, FText) |
 | `add_datatable_row` | Add a new row to a DataTable |
-| `update_datatable_row` | Update an existing row (partial update). Supports `dry_run` for diff preview |
+| `update_datatable_row` | Partial update of an existing row. Supports `dry_run` for diff preview |
 | `delete_datatable_row` | Delete a row from a DataTable |
-| `import_datatable_json` | Bulk import rows with create/upsert/replace modes and dry-run support |
+| `import_datatable_json` | Bulk import rows with create/upsert/replace modes and dry-run validation |
+| `batch_query` | Execute up to 20 commands in a single round-trip (useful for "join" workflows) |
+| `resolve_tags` | Resolve GameplayTags to DataTable rows containing those tags |
 
 ### CurveTables (3)
 
 | Tool | Description |
 |------|-------------|
-| `list_curve_tables` | List all loaded CurveTables with name, path, row count, and curve type (RichCurve/SimpleCurve) |
-| `get_curve_table` | Get curve data with all keys (time/value pairs), optional row filtering. Includes interp mode for RichCurve keys |
+| `list_curve_tables` | List all CurveTables with name, path, row count, and curve type (RichCurve/SimpleCurve) |
+| `get_curve_table` | Get curve data with all keys (time/value pairs), optional row filtering |
 | `update_curve_table_row` | Replace keys on an existing curve row with new time/value pairs |
 
 ### GameplayTags (4)
 
 | Tool | Description |
 |------|-------------|
-| `list_gameplay_tags` | List registered tags with source `.ini` file, parent tags, and child tags. Optionally filtered by prefix |
+| `list_gameplay_tags` | List registered tags with source `.ini` file, parent/child tag hierarchy. Filterable by prefix |
 | `validate_gameplay_tag` | Check if a specific tag is registered |
 | `register_gameplay_tag` | Register a new tag, writing to the appropriate `.ini` file |
 | `register_gameplay_tags` | Batch register multiple tags in one call |
@@ -224,7 +229,7 @@ All write operations include full editor integration out of the box:
 |------|-------------|
 | `list_data_assets` | List DataAssets filtered by class or path |
 | `get_data_asset` | Read all properties of a DataAsset |
-| `update_data_asset` | Update properties on a DataAsset (partial update). Supports `dry_run` for diff preview |
+| `update_data_asset` | Partial update of DataAsset properties. Supports `dry_run` for diff preview |
 
 ### Localization (3)
 
