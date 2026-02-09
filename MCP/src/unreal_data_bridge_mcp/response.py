@@ -5,7 +5,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-_MAX_RESPONSE_CHARS = 50_000
+_MAX_RESPONSE_CHARS = 40_000
 
 
 def format_response(data: dict, tool_name: str) -> str:
