@@ -1,3 +1,5 @@
+// Copyright Mavka Games. All Rights Reserved. https://www.mavka.games/
+
 using UnrealBuildTool;
 
 public class UnrealDataBridge : ModuleRules
