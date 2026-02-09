@@ -1,4 +1,4 @@
-// Copyright Mavka Games. All Rights Reserved. https://www.mavka.games/
+// Copyright Eugene Telyatnik. All Rights Reserved. https://github.com/etelyatn/UnrealDataBridgeMCP
 
 #include "Operations/UDBGameplayTagOps.h"
 #include "UDBSettings.h"
