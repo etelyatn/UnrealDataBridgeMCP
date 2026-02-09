@@ -74,15 +74,18 @@ void FUDBTcpServer::Stop()
 		TickDelegateHandle.Reset();
 	}
 
-	if (ClientSocket != nullptr)
+	for (FSocket* Socket : ClientSockets)
 	{
-		ClientSocket->Close();
-		ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(ClientSocket);
-		ClientSocket = nullptr;
+		if (Socket != nullptr)
+		{
+			Socket->Close();
+			ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(Socket);
+		}
 	}
+	ClientSockets.Empty();
+	ReceiveBuffers.Empty();
 
 	Listener.Reset();
-	ReceiveBuffer.Empty();
 
 	UE_LOG(LogUDBTcpServer, Log, TEXT("TCP server stopped"));
 }
@@ -94,63 +97,72 @@ bool FUDBTcpServer::IsRunning() const
 
 bool FUDBTcpServer::HandleConnectionAccepted(FSocket* InClientSocket, const FIPv4Endpoint& ClientEndpoint)
 {
-	if (ClientSocket != nullptr)
-	{
-		UE_LOG(LogUDBTcpServer, Warning, TEXT("Rejecting connection from %s - already have a client"), *ClientEndpoint.ToString());
-		InClientSocket->Close();
-		ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(InClientSocket);
-		return true;
-	}
-
-	UE_LOG(LogUDBTcpServer, Log, TEXT("Client connected from %s"), *ClientEndpoint.ToString());
-	ClientSocket = InClientSocket;
-	ReceiveBuffer.Empty();
+	UE_LOG(LogUDBTcpServer, Log, TEXT("Client connected from %s (total clients: %d)"), *ClientEndpoint.ToString(), ClientSockets.Num() + 1);
+	ClientSockets.Add(InClientSocket);
+	ReceiveBuffers.Add(InClientSocket, FString());
 	return true;
 }
 
 void FUDBTcpServer::ProcessClientData()
 {
-	if (ClientSocket == nullptr)
+	if (ClientSockets.Num() == 0)
 	{
 		return;
 	}
 
+	// Iterate in reverse so we can safely remove disconnected clients
+	for (int32 Index = ClientSockets.Num() - 1; Index >= 0; --Index)
+	{
+		FSocket* Socket = ClientSockets[Index];
+		if (!ProcessSingleClient(Socket))
+		{
+			DestroyClientSocket(Socket);
+			ClientSockets.RemoveAt(Index);
+		}
+	}
+}
+
+bool FUDBTcpServer::ProcessSingleClient(FSocket* InClientSocket)
+{
+	if (InClientSocket == nullptr)
+	{
+		return false;
+	}
+
 	// Check connection state
-	ESocketConnectionState ConnectionState = ClientSocket->GetConnectionState();
+	ESocketConnectionState ConnectionState = InClientSocket->GetConnectionState();
 	if (ConnectionState == SCS_ConnectionError)
 	{
 		UE_LOG(LogUDBTcpServer, Log, TEXT("Client disconnected"));
-		ClientSocket->Close();
-		ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(ClientSocket);
-		ClientSocket = nullptr;
-		ReceiveBuffer.Empty();
-		return;
+		return false;
 	}
 
 	// Read available data
 	uint32 PendingDataSize = 0;
-	if (!ClientSocket->HasPendingData(PendingDataSize) || PendingDataSize == 0)
+	if (!InClientSocket->HasPendingData(PendingDataSize) || PendingDataSize == 0)
 	{
-		return;
+		return true;
 	}
 
-	uint8 TempBuffer[4096];
+	TArray<uint8> TempBuffer;
+	TempBuffer.SetNumUninitialized(ReceiveBufferSize);
 	int32 BytesRead = 0;
 
-	if (!ClientSocket->Recv(TempBuffer, sizeof(TempBuffer) - 1, BytesRead) || BytesRead <= 0)
+	if (!InClientSocket->Recv(TempBuffer.GetData(), ReceiveBufferSize - 1, BytesRead) || BytesRead <= 0)
 	{
-		return;
+		return true;
 	}
 
-	FUTF8ToTCHAR Converter(reinterpret_cast<const ANSICHAR*>(TempBuffer), BytesRead);
-	ReceiveBuffer.Append(Converter.Get(), Converter.Length());
+	FString& ClientBuffer = ReceiveBuffers.FindOrAdd(InClientSocket);
+	FUTF8ToTCHAR Converter(reinterpret_cast<const ANSICHAR*>(TempBuffer.GetData()), BytesRead);
+	ClientBuffer.Append(Converter.Get(), Converter.Length());
 
 	// Process complete lines (delimited by \n)
 	int32 NewlineIndex = INDEX_NONE;
-	while (ReceiveBuffer.FindChar(TEXT('\n'), NewlineIndex))
+	while (ClientBuffer.FindChar(TEXT('\n'), NewlineIndex))
 	{
-		FString Line = ReceiveBuffer.Left(NewlineIndex);
-		ReceiveBuffer.RemoveAt(0, NewlineIndex + 1);
+		FString Line = ClientBuffer.Left(NewlineIndex);
+		ClientBuffer.RemoveAt(0, NewlineIndex + 1);
 
 		Line.TrimStartAndEndInline();
 		if (Line.IsEmpty())
@@ -169,7 +181,7 @@ void FUDBTcpServer::ProcessClientData()
 				TEXT("PARSE_ERROR"),
 				TEXT("Failed to parse JSON request")
 			);
-			SendResponse(FUDBCommandHandler::ResultToJson(ParseError, 0.0));
+			SendResponse(InClientSocket, FUDBCommandHandler::ResultToJson(ParseError, 0.0));
 			continue;
 		}
 
@@ -182,7 +194,7 @@ void FUDBTcpServer::ProcessClientData()
 				TEXT("MISSING_COMMAND"),
 				TEXT("JSON request missing 'command' field")
 			);
-			SendResponse(FUDBCommandHandler::ResultToJson(MissingCmd, 0.0));
+			SendResponse(InClientSocket, FUDBCommandHandler::ResultToJson(MissingCmd, 0.0));
 			continue;
 		}
 
@@ -199,14 +211,22 @@ void FUDBTcpServer::ProcessClientData()
 		FUDBCommandResult Result = CommandHandler.Execute(Command, Params);
 		const double EndTime = FPlatformTime::Seconds();
 		const double TimingMs = (EndTime - StartTime) * 1000.0;
+		const double TimingSeconds = EndTime - StartTime;
 
-		SendResponse(FUDBCommandHandler::ResultToJson(Result, TimingMs));
+		if (TimingSeconds > CommandTimeoutWarningSeconds)
+		{
+			UE_LOG(LogUDBTcpServer, Warning, TEXT("Command '%s' took %.1fs (threshold: %.0fs)"), *Command, TimingSeconds, CommandTimeoutWarningSeconds);
+		}
+
+		SendResponse(InClientSocket, FUDBCommandHandler::ResultToJson(Result, TimingMs));
 	}
+
+	return true;
 }
 
-void FUDBTcpServer::SendResponse(const FString& ResponseString)
+void FUDBTcpServer::SendResponse(FSocket* InClientSocket, const FString& ResponseString)
 {
-	if (ClientSocket == nullptr)
+	if (InClientSocket == nullptr)
 	{
 		return;
 	}
@@ -215,11 +235,23 @@ void FUDBTcpServer::SendResponse(const FString& ResponseString)
 	FTCHARToUTF8 Utf8Response(*ResponseWithNewline);
 
 	int32 BytesSent = 0;
-	if (!ClientSocket->Send(
+	if (!InClientSocket->Send(
 		reinterpret_cast<const uint8*>(Utf8Response.Get()),
 		Utf8Response.Length(),
 		BytesSent))
 	{
 		UE_LOG(LogUDBTcpServer, Warning, TEXT("Failed to send response"));
 	}
+}
+
+void FUDBTcpServer::DestroyClientSocket(FSocket* InClientSocket)
+{
+	if (InClientSocket == nullptr)
+	{
+		return;
+	}
+
+	ReceiveBuffers.Remove(InClientSocket);
+	InClientSocket->Close();
+	ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(InClientSocket);
 }

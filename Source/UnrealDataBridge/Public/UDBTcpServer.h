@@ -24,12 +24,21 @@ private:
 	bool HandleConnectionAccepted(FSocket* ClientSocket, const FIPv4Endpoint& ClientEndpoint);
 	void ProcessClientData();
 
-	/** Send a JSON response string followed by newline delimiter */
-	void SendResponse(const FString& ResponseString);
+	/** Process data for a single client socket. Returns false if client should be removed. */
+	bool ProcessSingleClient(FSocket* InClientSocket);
+
+	/** Send a JSON response string followed by newline delimiter to a specific client */
+	void SendResponse(FSocket* InClientSocket, const FString& ResponseString);
+
+	/** Close and destroy a client socket */
+	void DestroyClientSocket(FSocket* InClientSocket);
+
+	static constexpr double CommandTimeoutWarningSeconds = 30.0;
+	static constexpr int32 ReceiveBufferSize = 65536;
 
 	TUniquePtr<FTcpListener> Listener;
-	FSocket* ClientSocket = nullptr;
-	FString ReceiveBuffer;
+	TArray<FSocket*> ClientSockets;
+	TMap<FSocket*, FString> ReceiveBuffers;
 	FThreadSafeBool bRunning = false;
 	FTSTicker::FDelegateHandle TickDelegateHandle;
 	FUDBCommandHandler CommandHandler;
