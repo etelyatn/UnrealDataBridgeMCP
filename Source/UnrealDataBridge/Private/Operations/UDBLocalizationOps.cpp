@@ -152,6 +152,14 @@ FUDBCommandResult FUDBLocalizationOps::SetTranslation(const TSharedPtr<FJsonObje
 		);
 	}
 
+	if (Key.IsEmpty())
+	{
+		return FUDBCommandHandler::Error(
+			UDBErrorCodes::InvalidField,
+			TEXT("Parameter 'key' cannot be empty")
+		);
+	}
+
 	FUDBCommandResult LoadError;
 	UStringTable* StringTable = LoadStringTable(TablePath, LoadError);
 	if (StringTable == nullptr)

@@ -91,6 +91,14 @@ FUDBCommandResult FUDBDataAssetOps::GetDataAsset(const TSharedPtr<FJsonObject>& 
 		);
 	}
 
+	if (AssetPath.IsEmpty())
+	{
+		return FUDBCommandHandler::Error(
+			UDBErrorCodes::InvalidField,
+			TEXT("Parameter 'asset_path' cannot be empty")
+		);
+	}
+
 	FUDBCommandResult LoadError;
 	UDataAsset* DataAsset = LoadDataAsset(AssetPath, LoadError);
 	if (DataAsset == nullptr)
@@ -118,6 +126,14 @@ FUDBCommandResult FUDBDataAssetOps::UpdateDataAsset(const TSharedPtr<FJsonObject
 		return FUDBCommandHandler::Error(
 			UDBErrorCodes::InvalidField,
 			TEXT("Missing required param: asset_path")
+		);
+	}
+
+	if (AssetPath.IsEmpty())
+	{
+		return FUDBCommandHandler::Error(
+			UDBErrorCodes::InvalidField,
+			TEXT("Parameter 'asset_path' cannot be empty")
 		);
 	}
 

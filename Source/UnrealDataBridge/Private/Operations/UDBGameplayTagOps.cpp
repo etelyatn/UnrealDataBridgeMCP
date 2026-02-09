@@ -12,6 +12,32 @@
 
 DEFINE_LOG_CATEGORY_STATIC(LogUDBGameplayTagOps, Log, All);
 
+static bool IsValidTagFormat(const FString& TagString, FString& OutError)
+{
+	if (TagString.IsEmpty())
+	{
+		OutError = TEXT("Tag string is empty");
+		return false;
+	}
+
+	if (TagString.StartsWith(TEXT(".")) || TagString.EndsWith(TEXT(".")))
+	{
+		OutError = FString::Printf(TEXT("Tag must not start or end with a dot: %s"), *TagString);
+		return false;
+	}
+
+	for (TCHAR Ch : TagString)
+	{
+		if (!FChar::IsAlnum(Ch) && Ch != TEXT('.') && Ch != TEXT('_'))
+		{
+			OutError = FString::Printf(TEXT("Tag contains invalid character '%c': %s. Only alphanumeric, dots, and underscores are allowed."), Ch, *TagString);
+			return false;
+		}
+	}
+
+	return true;
+}
+
 FUDBCommandResult FUDBGameplayTagOps::ListGameplayTags(const TSharedPtr<FJsonObject>& Params)
 {
 	FString Prefix;
@@ -307,9 +333,10 @@ TSharedPtr<FJsonObject> FUDBGameplayTagOps::RegisterSingleTag(const FString& Tag
 {
 	bOutSuccess = false;
 
-	if (TagString.IsEmpty())
+	FString FormatError;
+	if (!IsValidTagFormat(TagString, FormatError))
 	{
-		OutError = TEXT("Tag string is empty");
+		OutError = FormatError;
 		return nullptr;
 	}
 
