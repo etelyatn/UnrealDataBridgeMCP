@@ -3,8 +3,13 @@
 import socket
 import json
 import logging
+import time
 
 logger = logging.getLogger(__name__)
+
+_CONNECT_TIMEOUT = 5.0
+_RECV_TIMEOUT = 60.0
+_RECONNECT_DELAY = 0.5
 
 
 class UEConnection:
@@ -24,10 +29,12 @@ class UEConnection:
         if self._socket is not None:
             return
 
+        logger.debug("Connecting to Unreal Editor at %s:%d", self.host, self.port)
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(5.0)
+            sock.settimeout(_CONNECT_TIMEOUT)
             sock.connect((self.host, self.port))
+            sock.settimeout(_RECV_TIMEOUT)
             self._socket = sock
             logger.info("Connected to Unreal Editor at %s:%d", self.host, self.port)
         except (ConnectionRefusedError, TimeoutError, OSError) as e:
@@ -49,12 +56,33 @@ class UEConnection:
     def send_command(self, command: str, params: dict | None = None) -> dict:
         """Send a command to the UE plugin and return the response.
 
-        Raises ConnectionError if not connected.
+        On connection failure, automatically retries once after a brief delay.
+        Raises ConnectionError if not connected after retry.
         Raises RuntimeError if the command fails.
         """
-        self.connect()  # Auto-connect if needed
+        last_error: Exception | None = None
 
+        for attempt in range(2):
+            try:
+                self.connect()
+                return self._send_and_receive(command, params)
+            except ConnectionError as e:
+                last_error = e
+                self.disconnect()
+                if attempt == 0:
+                    logger.debug(
+                        "Connection lost during '%s', reconnecting in %.1fs",
+                        command,
+                        _RECONNECT_DELAY,
+                    )
+                    time.sleep(_RECONNECT_DELAY)
+
+        raise last_error
+
+    def _send_and_receive(self, command: str, params: dict | None = None) -> dict:
+        """Send a command and read the response. Internal method, no retry logic."""
         request = json.dumps({"command": command, "params": params or {}}) + "\n"
+        start = time.monotonic()
         try:
             self._socket.sendall(request.encode("utf-8"))
 
@@ -66,6 +94,9 @@ class UEConnection:
                     self.disconnect()
                     raise ConnectionError("Connection closed by Unreal Editor")
                 buffer += chunk
+
+            elapsed = time.monotonic() - start
+            logger.debug("Command '%s' completed in %.3fs", command, elapsed)
 
             line = buffer.split(b"\n", 1)[0]
             response = json.loads(line.decode("utf-8"))

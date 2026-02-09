@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import sys
 from mcp.server.fastmcp import FastMCP
 from .tcp_client import UEConnection
 from .tools.datatables import register_datatable_tools
@@ -11,7 +12,12 @@ from .tools.data_assets import register_data_asset_tools
 from .tools.localization import register_localization_tools
 from .tools.assets import register_asset_tools
 
-logging.basicConfig(level=logging.INFO)
+_log_level = getattr(logging, os.environ.get("UDB_LOG_LEVEL", "INFO").upper(), logging.INFO)
+logging.basicConfig(
+    level=_log_level,
+    stream=sys.stderr,
+    format="%(levelname)s:%(name)s:%(message)s",
+)
 logger = logging.getLogger(__name__)
 
 mcp = FastMCP("unreal-data-bridge")
