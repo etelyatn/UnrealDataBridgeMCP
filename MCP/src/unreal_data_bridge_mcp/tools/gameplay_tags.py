@@ -14,8 +14,15 @@ def register_gameplay_tag_tools(mcp, connection: UEConnection):
     def list_gameplay_tags(prefix: str = "") -> str:
         """List all registered GameplayTags, optionally filtered by prefix.
 
+        Use validate_gameplay_tag to check if a specific tag exists.
+
         Args:
             prefix: Only return tags starting with this prefix (e.g., 'Quest.', 'Patient.Type.').
+
+        Returns:
+            JSON with:
+            - tags: Array of tag strings
+            - count: Total number of matching tags
         """
         try:
             response = connection.send_command("list_gameplay_tags", {"prefix": prefix})
@@ -27,8 +34,15 @@ def register_gameplay_tag_tools(mcp, connection: UEConnection):
     def validate_gameplay_tag(tag: str) -> str:
         """Check if a GameplayTag is registered and valid.
 
+        Use register_gameplay_tag to add missing tags.
+
         Args:
             tag: The tag string to validate (e.g., 'Quest.Generic.1').
+
+        Returns:
+            JSON with:
+            - tag: The tag string that was checked
+            - valid: Boolean indicating whether the tag is registered
         """
         try:
             response = connection.send_command("validate_gameplay_tag", {"tag": tag})
@@ -45,10 +59,18 @@ def register_gameplay_tag_tools(mcp, connection: UEConnection):
         2. The project's tag prefix mapping in plugin settings
         3. Default: Config/Tags/GameplayTags.ini
 
+        Tag format: alphanumeric characters, dots, and underscores only (e.g., 'Quest.New_Category.1').
+
         Args:
             tag: Tag string to register (e.g., 'Quest.NewCategory.SubTag').
             ini_file: Override the target .ini file path (relative to Config/).
             dev_comment: Developer comment for the tag entry.
+
+        Returns:
+            JSON with:
+            - tag: The registered tag string
+            - ini_file: The .ini file the tag was written to
+            - already_existed: Boolean, true if the tag was already registered
         """
         try:
             params = {"tag": tag}
@@ -65,10 +87,19 @@ def register_gameplay_tag_tools(mcp, connection: UEConnection):
     def register_gameplay_tags(tags: str) -> str:
         """Batch register multiple GameplayTags.
 
+        Each tag follows the same rules as register_gameplay_tag.
+
         Args:
             tags: JSON string with array of objects, each containing 'tag' and optionally
                   'ini_file' and 'dev_comment'.
                   Example: '[{"tag": "Quest.New.1"}, {"tag": "Quest.New.2", "dev_comment": "Second quest"}]'
+
+        Returns:
+            JSON with:
+            - registered: Number of newly registered tags
+            - already_existed: Number of tags that were already registered
+            - failed: Number of tags that failed to register
+            - results: Array with per-tag details
         """
         try:
             tags_data = json.loads(tags)

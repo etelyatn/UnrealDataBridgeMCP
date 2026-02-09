@@ -25,7 +25,7 @@ def register_localization_tools(mcp, connection: UEConnection):
             JSON with 'string_tables' array, each containing:
             - name: Asset name (e.g., 'ST_UI_MainMenu')
             - path: Full asset path
-            - entry_count: Number of translation entries
+            - namespace: The StringTable's namespace identifier
         """
         try:
             params = {}
@@ -52,8 +52,8 @@ def register_localization_tools(mcp, connection: UEConnection):
         Returns:
             JSON with:
             - string_table_path: The requested path
-            - entries: Array of {key, text} objects
-            - total_count: Total number of matching entries
+            - entries: Array of {key, source_string} objects
+            - count: Total number of matching entries
         """
         try:
             params = {"string_table_path": string_table_path}

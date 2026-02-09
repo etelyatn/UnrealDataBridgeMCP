@@ -18,7 +18,7 @@ def register_data_asset_tools(mcp, connection: UEConnection):
         Use this to discover available DataAssets before reading their properties.
 
         Args:
-            class_filter: Optional class name to filter by (e.g., 'URipProductDataAsset').
+            class_filter: Optional class name to filter by (e.g., 'RipProductDataAsset').
                           Only returns assets of this class or its subclasses.
             path_filter: Optional prefix filter for asset paths (e.g., '/Game/Ripper/Products/').
                          Only returns assets whose path starts with this prefix.
@@ -53,7 +53,7 @@ def register_data_asset_tools(mcp, connection: UEConnection):
         Returns:
             JSON with:
             - asset_path: The requested asset path
-            - class_name: UClass name of the DataAsset
+            - asset_class: UClass name of the DataAsset
             - properties: Object with all property names and values
         """
         try:
@@ -79,7 +79,7 @@ def register_data_asset_tools(mcp, connection: UEConnection):
                         Example: '{"DisplayName": "Cyber Arm Mk2", "BaseCost": 5000}'
 
         Returns:
-            JSON with success status, modified_properties list, and any warnings.
+            JSON with success status, modified_fields list, and any warnings.
         """
         try:
             props = json.loads(properties)

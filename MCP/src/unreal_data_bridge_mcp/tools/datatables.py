@@ -163,7 +163,9 @@ def register_datatable_tools(mcp, connection: UEConnection):
         """Add a new row to a DataTable.
 
         Use get_datatable_schema first to understand the expected row structure.
-        For TInstancedStruct fields, include a '_struct_type' key with the struct type name.
+        For TInstancedStruct fields, include a '_struct_type' key specifying the concrete type name
+        (e.g., '_struct_type': 'FRipRewardItem'). Use get_struct_schema with include_subtypes=True
+        to discover valid subtypes.
 
         Note: This marks the DataTable as dirty (unsaved). Use Unreal's File > Save All to persist.
 
@@ -193,7 +195,11 @@ def register_datatable_tools(mcp, connection: UEConnection):
         """Update an existing row in a DataTable with partial data.
 
         Only fields present in row_data are modified; other fields remain unchanged.
-        Use get_datatable_row first to see current values.
+        Use get_datatable_row first to see current values. For TInstancedStruct fields,
+        include a '_struct_type' key specifying the concrete type name
+        (e.g., '_struct_type': 'FRipRewardItem').
+
+        Note: This marks the DataTable as dirty (unsaved). Use Unreal's File > Save All to persist.
 
         Args:
             table_path: Full asset path to the DataTable.
