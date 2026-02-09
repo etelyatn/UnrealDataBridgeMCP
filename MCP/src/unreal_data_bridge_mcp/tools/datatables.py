@@ -17,6 +17,11 @@ def register_datatable_tools(mcp, connection: UEConnection):
         Returns each table's name, asset path, row struct type, and row count.
         Use this to discover available DataTables before querying their contents.
 
+        CompositeDataTables (tables that aggregate rows from multiple source tables)
+        are flagged with is_composite=true and include a parent_tables array listing
+        their source tables. Prefer reading from composites (they show all aggregated data),
+        but write to the actual source tables.
+
         Args:
             path_filter: Optional prefix filter for asset paths (e.g., '/Game/Data/Quests/').
                          Only returns tables whose path starts with this prefix.
@@ -27,6 +32,8 @@ def register_datatable_tools(mcp, connection: UEConnection):
             - path: Full asset path (e.g., '/Game/Data/Quests/DT_QuestDefinitions.DT_QuestDefinitions')
             - row_struct: Name of the row struct type (e.g., 'FRipQuestDefinition')
             - row_count: Number of rows in the table
+            - is_composite: Whether this is a CompositeDataTable
+            - parent_tables: (composites only) Array of {name, path} for each source table
         """
         try:
             response = connection.send_command("list_datatables", {"path_filter": path_filter})
@@ -162,6 +169,10 @@ def register_datatable_tools(mcp, connection: UEConnection):
     def add_datatable_row(table_path: str, row_name: str, row_data: str) -> str:
         """Add a new row to a DataTable.
 
+        IMPORTANT: Cannot add rows to CompositeDataTables. If targeted at a composite,
+        returns COMPOSITE_WRITE_BLOCKED error with the list of source tables to use instead.
+        Use list_datatables to identify composites and their source tables.
+
         Use get_datatable_schema first to understand the expected row structure.
         For TInstancedStruct fields, include a '_struct_type' key specifying the concrete type name
         (e.g., '_struct_type': 'FRipRewardItem'). Use get_struct_schema with include_subtypes=True
@@ -170,7 +181,7 @@ def register_datatable_tools(mcp, connection: UEConnection):
         Note: This marks the DataTable as dirty (unsaved). Use Unreal's File > Save All to persist.
 
         Args:
-            table_path: Full asset path to the DataTable.
+            table_path: Full asset path to the DataTable. Must be a non-composite table.
             row_name: Unique name/key for the new row (e.g., 'Quest_NewQuest_01').
             row_data: JSON string with row field values. Example: '{"QuestName": "Test", "Difficulty": 3}'
 
@@ -194,6 +205,10 @@ def register_datatable_tools(mcp, connection: UEConnection):
     def update_datatable_row(table_path: str, row_name: str, row_data: str) -> str:
         """Update an existing row in a DataTable with partial data.
 
+        Composite-aware: If table_path points to a CompositeDataTable, the update
+        automatically resolves to the actual source table that owns the row. The response
+        includes source_table_path and composite_table_path when auto-resolution occurs.
+
         Only fields present in row_data are modified; other fields remain unchanged.
         Use get_datatable_row first to see current values. For TInstancedStruct fields,
         include a '_struct_type' key specifying the concrete type name
@@ -202,12 +217,13 @@ def register_datatable_tools(mcp, connection: UEConnection):
         Note: This marks the DataTable as dirty (unsaved). Use Unreal's File > Save All to persist.
 
         Args:
-            table_path: Full asset path to the DataTable.
+            table_path: Full asset path to the DataTable (can be a composite — auto-resolves).
             row_name: Name of the existing row to update.
             row_data: JSON string with fields to update. Only specified fields are changed.
 
         Returns:
             JSON with success status, modified_fields list, and any warnings.
+            If auto-resolved from a composite, also includes source_table_path and composite_table_path.
         """
         try:
             data = json.loads(row_data)
@@ -226,12 +242,17 @@ def register_datatable_tools(mcp, connection: UEConnection):
     def delete_datatable_row(table_path: str, row_name: str) -> str:
         """Delete a row from a DataTable.
 
+        Composite-aware: If table_path points to a CompositeDataTable, the delete
+        automatically resolves to the actual source table that owns the row. The response
+        includes source_table_path and composite_table_path when auto-resolution occurs.
+
         Args:
-            table_path: Full asset path to the DataTable.
+            table_path: Full asset path to the DataTable (can be a composite — auto-resolves).
             row_name: Name of the row to delete.
 
         Returns:
             JSON with success status and deleted row_name.
+            If auto-resolved from a composite, also includes source_table_path and composite_table_path.
         """
         try:
             response = connection.send_command("delete_datatable_row", {
@@ -246,8 +267,12 @@ def register_datatable_tools(mcp, connection: UEConnection):
     def import_datatable_json(table_path: str, rows: str, mode: str = "create", dry_run: bool = False) -> str:
         """Bulk import rows into a DataTable.
 
+        IMPORTANT: Cannot import into CompositeDataTables. If targeted at a composite,
+        returns COMPOSITE_WRITE_BLOCKED error with the list of source tables to use instead.
+        Use list_datatables to identify composites and their source tables.
+
         Args:
-            table_path: Full asset path to the DataTable.
+            table_path: Full asset path to the DataTable. Must be a non-composite table.
             rows: JSON string with array of objects, each containing 'row_name' and 'row_data'.
                   Example: '[{"row_name": "Row1", "row_data": {"Field1": "value"}}]'
             mode: Import mode - 'create' (skip existing), 'upsert' (create or update),

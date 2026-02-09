@@ -3,6 +3,7 @@
 #include "Operations/UDBDataTableOps.h"
 #include "UDBSerializer.h"
 #include "Engine/DataTable.h"
+#include "Engine/CompositeDataTable.h"
 #include "UObject/UObjectIterator.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -20,6 +21,93 @@ UDataTable* FUDBDataTableOps::LoadDataTable(const FString& TablePath, FUDBComman
 		);
 	}
 	return DataTable;
+}
+
+TArray<UDataTable*> FUDBDataTableOps::GetParentTables(const UCompositeDataTable* CompositeTable)
+{
+	TArray<UDataTable*> Result;
+	if (CompositeTable == nullptr)
+	{
+		return Result;
+	}
+
+	const FArrayProperty* ParentTablesProp = CastField<FArrayProperty>(
+		UCompositeDataTable::StaticClass()->FindPropertyByName(TEXT("ParentTables"))
+	);
+	if (ParentTablesProp == nullptr)
+	{
+		UE_LOG(LogUDBDataTableOps, Warning, TEXT("Could not find ParentTables property on UCompositeDataTable"));
+		return Result;
+	}
+
+	FScriptArrayHelper ArrayHelper(ParentTablesProp, ParentTablesProp->ContainerPtrToValuePtr<void>(CompositeTable));
+	const FObjectProperty* InnerProp = CastField<FObjectProperty>(ParentTablesProp->Inner);
+	if (InnerProp == nullptr)
+	{
+		return Result;
+	}
+
+	for (int32 Index = 0; Index < ArrayHelper.Num(); ++Index)
+	{
+		UObject* Obj = InnerProp->GetObjectPropertyValue(ArrayHelper.GetRawPtr(Index));
+		UDataTable* Table = Cast<UDataTable>(Obj);
+		if (Table != nullptr)
+		{
+			Result.Add(Table);
+		}
+	}
+
+	return Result;
+}
+
+TArray<TSharedPtr<FJsonValue>> FUDBDataTableOps::GetParentTablesJsonArray(const UCompositeDataTable* CompositeTable)
+{
+	TArray<TSharedPtr<FJsonValue>> JsonArray;
+	TArray<UDataTable*> Parents = GetParentTables(CompositeTable);
+
+	for (const UDataTable* Parent : Parents)
+	{
+		TSharedRef<FJsonObject> Entry = MakeShared<FJsonObject>();
+		Entry->SetStringField(TEXT("name"), Parent->GetName());
+		Entry->SetStringField(TEXT("path"), Parent->GetPathName());
+		JsonArray.Add(MakeShared<FJsonValueObject>(Entry));
+	}
+
+	return JsonArray;
+}
+
+UDataTable* FUDBDataTableOps::FindSourceTableForRow(const UCompositeDataTable* CompositeTable, FName RowName)
+{
+	TArray<UDataTable*> Parents = GetParentTables(CompositeTable);
+
+	// Search back-to-front: higher-index tables override lower-index ones
+	for (int32 Index = Parents.Num() - 1; Index >= 0; --Index)
+	{
+		UDataTable* Parent = Parents[Index];
+		if (Parent == nullptr)
+		{
+			continue;
+		}
+
+		// If parent is itself a composite, recurse
+		const UCompositeDataTable* NestedComposite = Cast<UCompositeDataTable>(Parent);
+		if (NestedComposite != nullptr)
+		{
+			UDataTable* NestedResult = FindSourceTableForRow(NestedComposite, RowName);
+			if (NestedResult != nullptr)
+			{
+				return NestedResult;
+			}
+			continue;
+		}
+
+		if (Parent->FindRowUnchecked(RowName) != nullptr)
+		{
+			return Parent;
+		}
+	}
+
+	return nullptr;
 }
 
 FUDBCommandResult FUDBDataTableOps::ListDatatables(const TSharedPtr<FJsonObject>& Params)
@@ -62,6 +150,13 @@ FUDBCommandResult FUDBDataTableOps::ListDatatables(const TSharedPtr<FJsonObject>
 		}
 
 		EntryJson->SetNumberField(TEXT("row_count"), DataTable->GetRowMap().Num());
+
+		const UCompositeDataTable* CompositeTable = Cast<UCompositeDataTable>(DataTable);
+		EntryJson->SetBoolField(TEXT("is_composite"), CompositeTable != nullptr);
+		if (CompositeTable != nullptr)
+		{
+			EntryJson->SetArrayField(TEXT("parent_tables"), GetParentTablesJsonArray(CompositeTable));
+		}
 
 		DatatablesArray.Add(MakeShared<FJsonValueObject>(EntryJson));
 	}
@@ -322,6 +417,19 @@ FUDBCommandResult FUDBDataTableOps::AddDatatableRow(const TSharedPtr<FJsonObject
 		return LoadError;
 	}
 
+	// Block writes to composite DataTables
+	const UCompositeDataTable* CompositeTable = Cast<UCompositeDataTable>(DataTable);
+	if (CompositeTable != nullptr)
+	{
+		TSharedPtr<FJsonObject> Details = MakeShared<FJsonObject>();
+		Details->SetArrayField(TEXT("parent_tables"), GetParentTablesJsonArray(CompositeTable));
+		return FUDBCommandHandler::Error(
+			UDBErrorCodes::CompositeWriteBlocked,
+			FString::Printf(TEXT("Cannot add rows to CompositeDataTable '%s'. Add to one of its source tables instead."), *DataTable->GetName()),
+			Details
+		);
+	}
+
 	const FName RowFName(*RowName);
 	if (DataTable->FindRowUnchecked(RowFName) != nullptr)
 	{
@@ -415,6 +523,26 @@ FUDBCommandResult FUDBDataTableOps::UpdateDatatableRow(const TSharedPtr<FJsonObj
 	}
 
 	const FName RowFName(*RowName);
+
+	// Auto-resolve composite to source table
+	FString CompositeTablePath;
+	const UCompositeDataTable* CompositeTable = Cast<UCompositeDataTable>(DataTable);
+	if (CompositeTable != nullptr)
+	{
+		UDataTable* SourceTable = FindSourceTableForRow(CompositeTable, RowFName);
+		if (SourceTable == nullptr)
+		{
+			return FUDBCommandHandler::Error(
+				UDBErrorCodes::RowNotFound,
+				FString::Printf(TEXT("Row '%s' not found in any source table of composite '%s'"), *RowName, *DataTable->GetName())
+			);
+		}
+		CompositeTablePath = TablePath;
+		DataTable = SourceTable;
+		UE_LOG(LogUDBDataTableOps, Log, TEXT("Auto-resolved composite '%s' -> source table '%s' for row '%s'"),
+			*CompositeTablePath, *DataTable->GetPathName(), *RowName);
+	}
+
 	uint8* RowPtr = DataTable->FindRowUnchecked(RowFName);
 	if (RowPtr == nullptr)
 	{
@@ -456,6 +584,12 @@ FUDBCommandResult FUDBDataTableOps::UpdateDatatableRow(const TSharedPtr<FJsonObj
 
 	TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
 	Data->SetStringField(TEXT("row_name"), RowName);
+
+	if (!CompositeTablePath.IsEmpty())
+	{
+		Data->SetStringField(TEXT("source_table_path"), DataTable->GetPathName());
+		Data->SetStringField(TEXT("composite_table_path"), CompositeTablePath);
+	}
 
 	TArray<TSharedPtr<FJsonValue>> ModifiedFieldsArray;
 	for (const FString& Field : ModifiedFields)
@@ -504,6 +638,26 @@ FUDBCommandResult FUDBDataTableOps::DeleteDatatableRow(const TSharedPtr<FJsonObj
 	}
 
 	const FName RowFName(*RowName);
+
+	// Auto-resolve composite to source table
+	FString CompositeTablePath;
+	const UCompositeDataTable* CompositeTable = Cast<UCompositeDataTable>(DataTable);
+	if (CompositeTable != nullptr)
+	{
+		UDataTable* SourceTable = FindSourceTableForRow(CompositeTable, RowFName);
+		if (SourceTable == nullptr)
+		{
+			return FUDBCommandHandler::Error(
+				UDBErrorCodes::RowNotFound,
+				FString::Printf(TEXT("Row '%s' not found in any source table of composite '%s'"), *RowName, *DataTable->GetName())
+			);
+		}
+		CompositeTablePath = TablePath;
+		DataTable = SourceTable;
+		UE_LOG(LogUDBDataTableOps, Log, TEXT("Auto-resolved composite '%s' -> source table '%s' for row '%s'"),
+			*CompositeTablePath, *DataTable->GetPathName(), *RowName);
+	}
+
 	if (DataTable->FindRowUnchecked(RowFName) == nullptr)
 	{
 		return FUDBCommandHandler::Error(
@@ -517,6 +671,12 @@ FUDBCommandResult FUDBDataTableOps::DeleteDatatableRow(const TSharedPtr<FJsonObj
 
 	TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
 	Data->SetStringField(TEXT("row_name"), RowName);
+
+	if (!CompositeTablePath.IsEmpty())
+	{
+		Data->SetStringField(TEXT("source_table_path"), DataTable->GetPathName());
+		Data->SetStringField(TEXT("composite_table_path"), CompositeTablePath);
+	}
 
 	return FUDBCommandHandler::Success(Data);
 }
@@ -560,6 +720,19 @@ FUDBCommandResult FUDBDataTableOps::ImportDatatableJson(const TSharedPtr<FJsonOb
 	if (DataTable == nullptr)
 	{
 		return LoadError;
+	}
+
+	// Block import to composite DataTables
+	const UCompositeDataTable* CompositeTable = Cast<UCompositeDataTable>(DataTable);
+	if (CompositeTable != nullptr)
+	{
+		TSharedPtr<FJsonObject> Details = MakeShared<FJsonObject>();
+		Details->SetArrayField(TEXT("parent_tables"), GetParentTablesJsonArray(CompositeTable));
+		return FUDBCommandHandler::Error(
+			UDBErrorCodes::CompositeWriteBlocked,
+			FString::Printf(TEXT("Cannot import rows into CompositeDataTable '%s'. Import into one of its source tables instead."), *DataTable->GetName()),
+			Details
+		);
 	}
 
 	const UScriptStruct* RowStruct = DataTable->GetRowStruct();

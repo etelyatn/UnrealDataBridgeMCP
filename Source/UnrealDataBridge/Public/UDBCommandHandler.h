@@ -19,6 +19,7 @@ namespace UDBErrorCodes
 	static const FString SerializationError = TEXT("SERIALIZATION_ERROR");
 	static const FString EditorNotReady = TEXT("EDITOR_NOT_READY");
 	static const FString UnknownCommand = TEXT("UNKNOWN_COMMAND");
+	static const FString CompositeWriteBlocked = TEXT("COMPOSITE_WRITE_BLOCKED");
 }
 
 /** Result of a command execution */
