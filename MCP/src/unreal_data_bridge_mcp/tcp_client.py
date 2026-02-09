@@ -5,6 +5,8 @@ import json
 import logging
 import time
 
+from .cache import ResponseCache
+
 logger = logging.getLogger(__name__)
 
 _CONNECT_TIMEOUT = 5.0
@@ -19,6 +21,7 @@ class UEConnection:
         self.host = host
         self.port = port
         self._socket: socket.socket | None = None
+        self._cache = ResponseCache()
 
     @property
     def connected(self) -> bool:
@@ -75,9 +78,36 @@ class UEConnection:
                         command,
                         _RECONNECT_DELAY,
                     )
+                    # Connection dropped - clear all caches (editor may have restarted)
+                    cleared = self._cache.invalidate(None)
+                    if cleared > 0:
+                        logger.info(
+                            "Cleared %d cache entries on reconnect", cleared
+                        )
                     time.sleep(_RECONNECT_DELAY)
 
         raise last_error
+
+    def send_command_cached(
+        self, command: str, params: dict | None = None, ttl: float = 300.0
+    ) -> dict:
+        """Send a command with response caching.
+
+        Returns cached response if available and not expired.
+        Otherwise sends the command and caches the successful response.
+        """
+        key = ResponseCache.make_key(command, params)
+        cached = self._cache.get(key)
+        if cached is not None:
+            return cached
+
+        response = self.send_command(command, params)
+        self._cache.set(key, response, ttl)
+        return response
+
+    def invalidate_cache(self, pattern: str | None) -> int:
+        """Invalidate cache entries. None clears all."""
+        return self._cache.invalidate(pattern)
 
     def _send_and_receive(self, command: str, params: dict | None = None) -> dict:
         """Send a command and read the response. Internal method, no retry logic."""

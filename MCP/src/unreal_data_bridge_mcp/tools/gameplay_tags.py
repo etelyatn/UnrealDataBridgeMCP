@@ -6,6 +6,8 @@ from ..tcp_client import UEConnection
 
 logger = logging.getLogger(__name__)
 
+_TTL_LIST = 300  # 5 min
+
 
 def register_gameplay_tag_tools(mcp, connection: UEConnection):
     """Register all GameplayTag-related MCP tools."""
@@ -25,7 +27,9 @@ def register_gameplay_tag_tools(mcp, connection: UEConnection):
             - count: Total number of matching tags
         """
         try:
-            response = connection.send_command("list_gameplay_tags", {"prefix": prefix})
+            response = connection.send_command_cached(
+                "list_gameplay_tags", {"prefix": prefix}, ttl=_TTL_LIST
+            )
             return json.dumps(response.get("data", {}), indent=2)
         except ConnectionError as e:
             return f"Error: {e}"
@@ -79,6 +83,9 @@ def register_gameplay_tag_tools(mcp, connection: UEConnection):
             if dev_comment:
                 params["dev_comment"] = dev_comment
             response = connection.send_command("register_gameplay_tag", params)
+            # Invalidate tag list and catalog caches
+            connection.invalidate_cache("list_gameplay_tags:")
+            connection.invalidate_cache("get_data_catalog:")
             return json.dumps(response.get("data", {}), indent=2)
         except ConnectionError as e:
             return f"Error: {e}"
@@ -104,6 +111,9 @@ def register_gameplay_tag_tools(mcp, connection: UEConnection):
         try:
             tags_data = json.loads(tags)
             response = connection.send_command("register_gameplay_tags", {"tags": tags_data})
+            # Invalidate tag list and catalog caches
+            connection.invalidate_cache("list_gameplay_tags:")
+            connection.invalidate_cache("get_data_catalog:")
             return json.dumps(response.get("data", {}), indent=2)
         except json.JSONDecodeError as e:
             return f"Error: Invalid JSON in tags: {e}"

@@ -6,6 +6,8 @@ from ..tcp_client import UEConnection
 
 logger = logging.getLogger(__name__)
 
+_TTL_LIST = 300  # 5 min
+
 
 def register_data_asset_tools(mcp, connection: UEConnection):
     """Register all DataAsset-related MCP tools."""
@@ -35,7 +37,9 @@ def register_data_asset_tools(mcp, connection: UEConnection):
                 params["class_filter"] = class_filter
             if path_filter:
                 params["path_filter"] = path_filter
-            response = connection.send_command("list_data_assets", params)
+            response = connection.send_command_cached(
+                "list_data_assets", params, ttl=_TTL_LIST
+            )
             return json.dumps(response.get("data", {}), indent=2)
         except ConnectionError as e:
             return f"Error: {e}"

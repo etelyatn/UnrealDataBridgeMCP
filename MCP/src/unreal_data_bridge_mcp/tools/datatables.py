@@ -6,6 +6,10 @@ from ..tcp_client import UEConnection
 
 logger = logging.getLogger(__name__)
 
+# Cache TTLs (seconds)
+_TTL_SCHEMA = 1800  # 30 min - schemas require recompile to change
+_TTL_LIST = 300  # 5 min - table list rarely changes during session
+
 
 def register_datatable_tools(mcp, connection: UEConnection):
     """Register all DataTable-related MCP tools."""
@@ -36,7 +40,9 @@ def register_datatable_tools(mcp, connection: UEConnection):
             - parent_tables: (composites only) Array of {name, path} for each source table
         """
         try:
-            response = connection.send_command("list_datatables", {"path_filter": path_filter})
+            response = connection.send_command_cached(
+                "list_datatables", {"path_filter": path_filter}, ttl=_TTL_LIST
+            )
             return json.dumps(response.get("data", {}), indent=2)
         except ConnectionError as e:
             return f"Error: {e}"
@@ -63,10 +69,11 @@ def register_datatable_tools(mcp, connection: UEConnection):
             - fields: For struct fields, nested field schemas
         """
         try:
-            response = connection.send_command("get_datatable_schema", {
-                "table_path": table_path,
-                "include_inherited": include_inherited,
-            })
+            response = connection.send_command_cached(
+                "get_datatable_schema",
+                {"table_path": table_path, "include_inherited": include_inherited},
+                ttl=_TTL_SCHEMA,
+            )
             return json.dumps(response.get("data", {}), indent=2)
         except ConnectionError as e:
             return f"Error: {e}"
@@ -157,10 +164,11 @@ def register_datatable_tools(mcp, connection: UEConnection):
             JSON with 'schema' containing field definitions, and optionally 'subtypes' array.
         """
         try:
-            response = connection.send_command("get_struct_schema", {
-                "struct_name": struct_name,
-                "include_subtypes": include_subtypes,
-            })
+            response = connection.send_command_cached(
+                "get_struct_schema",
+                {"struct_name": struct_name, "include_subtypes": include_subtypes},
+                ttl=_TTL_SCHEMA,
+            )
             return json.dumps(response.get("data", {}), indent=2)
         except ConnectionError as e:
             return f"Error: {e}"
@@ -195,6 +203,9 @@ def register_datatable_tools(mcp, connection: UEConnection):
                 "row_name": row_name,
                 "row_data": data,
             })
+            # Invalidate list caches (row count changed)
+            connection.invalidate_cache("list_datatables:")
+            connection.invalidate_cache("get_data_catalog:")
             return json.dumps(response.get("data", {}), indent=2)
         except json.JSONDecodeError as e:
             return f"Error: Invalid JSON in row_data: {e}"
@@ -259,6 +270,9 @@ def register_datatable_tools(mcp, connection: UEConnection):
                 "table_path": table_path,
                 "row_name": row_name,
             })
+            # Invalidate list caches (row count changed)
+            connection.invalidate_cache("list_datatables:")
+            connection.invalidate_cache("get_data_catalog:")
             return json.dumps(response.get("data", {}), indent=2)
         except ConnectionError as e:
             return f"Error: {e}"
@@ -344,6 +358,10 @@ def register_datatable_tools(mcp, connection: UEConnection):
                 "mode": mode,
                 "dry_run": dry_run,
             })
+            if not dry_run:
+                # Invalidate list caches (row counts changed)
+                connection.invalidate_cache("list_datatables:")
+                connection.invalidate_cache("get_data_catalog:")
             return json.dumps(response.get("data", {}), indent=2)
         except json.JSONDecodeError as e:
             return f"Error: Invalid JSON in rows: {e}"

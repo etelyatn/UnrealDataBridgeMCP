@@ -6,6 +6,8 @@ from ..tcp_client import UEConnection
 
 logger = logging.getLogger(__name__)
 
+_TTL_LIST = 300  # 5 min
+
 
 def register_localization_tools(mcp, connection: UEConnection):
     """Register all localization-related MCP tools."""
@@ -31,7 +33,9 @@ def register_localization_tools(mcp, connection: UEConnection):
             params = {}
             if path_filter:
                 params["path_filter"] = path_filter
-            response = connection.send_command("list_string_tables", params)
+            response = connection.send_command_cached(
+                "list_string_tables", params, ttl=_TTL_LIST
+            )
             return json.dumps(response.get("data", {}), indent=2)
         except ConnectionError as e:
             return f"Error: {e}"

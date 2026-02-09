@@ -8,9 +8,15 @@
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "GameplayTagContainer.h"
+#include "GameplayTagsManager.h"
 #include "StructUtils/InstancedStruct.h"
 #include "UObject/SoftObjectPath.h"
 #include "Internationalization/Text.h"
+#include "Internationalization/StringTable.h"
+#include "Internationalization/StringTableCore.h"
+#include "AssetRegistry/IAssetRegistry.h"
+#include "AssetRegistry/AssetData.h"
+#include "Engine/DataAsset.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogUDBDataTableOps, Log, All);
 
@@ -1226,6 +1232,183 @@ FUDBCommandResult FUDBDataTableOps::SearchDatatableContent(const TSharedPtr<FJso
 	Data->SetNumberField(TEXT("total_matches"), TotalMatches);
 	Data->SetNumberField(TEXT("limit"), Limit);
 	Data->SetArrayField(TEXT("results"), ResultsArray);
+
+	return FUDBCommandHandler::Success(Data);
+}
+
+FUDBCommandResult FUDBDataTableOps::GetDataCatalog(const TSharedPtr<FJsonObject>& Params)
+{
+	TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
+
+	// --- DataTables section ---
+	{
+		TArray<TSharedPtr<FJsonValue>> DatatablesArray;
+
+		for (TObjectIterator<UDataTable> It; It; ++It)
+		{
+			UDataTable* DataTable = *It;
+			if (DataTable == nullptr)
+			{
+				continue;
+			}
+
+			TSharedRef<FJsonObject> EntryJson = MakeShared<FJsonObject>();
+			EntryJson->SetStringField(TEXT("name"), DataTable->GetName());
+			EntryJson->SetStringField(TEXT("path"), DataTable->GetPathName());
+
+			const UScriptStruct* RowStruct = DataTable->GetRowStruct();
+			EntryJson->SetStringField(TEXT("row_struct"), RowStruct ? RowStruct->GetName() : TEXT("None"));
+			EntryJson->SetNumberField(TEXT("row_count"), DataTable->GetRowMap().Num());
+
+			const UCompositeDataTable* CompositeTable = Cast<UCompositeDataTable>(DataTable);
+			EntryJson->SetBoolField(TEXT("is_composite"), CompositeTable != nullptr);
+			if (CompositeTable != nullptr)
+			{
+				EntryJson->SetArrayField(TEXT("parent_tables"), GetParentTablesJsonArray(CompositeTable));
+			}
+
+			// top_fields: first 8 field names from the row struct
+			if (RowStruct != nullptr)
+			{
+				TArray<TSharedPtr<FJsonValue>> FieldNamesArray;
+				int32 FieldCount = 0;
+				for (TFieldIterator<FProperty> PropIt(RowStruct); PropIt && FieldCount < 8; ++PropIt, ++FieldCount)
+				{
+					FieldNamesArray.Add(MakeShared<FJsonValueString>(PropIt->GetName()));
+				}
+				EntryJson->SetArrayField(TEXT("top_fields"), FieldNamesArray);
+			}
+
+			DatatablesArray.Add(MakeShared<FJsonValueObject>(EntryJson));
+		}
+
+		Data->SetArrayField(TEXT("datatables"), DatatablesArray);
+	}
+
+	// --- GameplayTag prefixes section ---
+	{
+		UGameplayTagsManager& TagManager = UGameplayTagsManager::Get();
+		FGameplayTagContainer AllTags;
+		TagManager.RequestAllGameplayTags(AllTags, false);
+
+		// Count tags by top-level prefix (first segment before '.')
+		TMap<FString, int32> PrefixCounts;
+		for (const FGameplayTag& Tag : AllTags)
+		{
+			FString TagString = Tag.ToString();
+			int32 DotIndex = INDEX_NONE;
+			if (TagString.FindChar(TEXT('.'), DotIndex))
+			{
+				FString Prefix = TagString.Left(DotIndex);
+				PrefixCounts.FindOrAdd(Prefix)++;
+			}
+			else
+			{
+				PrefixCounts.FindOrAdd(TagString)++;
+			}
+		}
+
+		TArray<TSharedPtr<FJsonValue>> PrefixArray;
+		for (const auto& Pair : PrefixCounts)
+		{
+			TSharedRef<FJsonObject> PrefixEntry = MakeShared<FJsonObject>();
+			PrefixEntry->SetStringField(TEXT("prefix"), Pair.Key);
+			PrefixEntry->SetNumberField(TEXT("count"), Pair.Value);
+			PrefixArray.Add(MakeShared<FJsonValueObject>(PrefixEntry));
+		}
+
+		Data->SetArrayField(TEXT("tag_prefixes"), PrefixArray);
+	}
+
+	// --- DataAsset classes section ---
+	{
+		IAssetRegistry* AssetRegistry = IAssetRegistry::Get();
+		if (AssetRegistry != nullptr)
+		{
+			FARFilter Filter;
+			Filter.ClassPaths.Add(UDataAsset::StaticClass()->GetClassPathName());
+			Filter.bRecursiveClasses = true;
+
+			TArray<FAssetData> AssetDataList;
+			AssetRegistry->GetAssets(Filter, AssetDataList);
+
+			// Group by class name
+			TMap<FString, int32> ClassCounts;
+			TMap<FString, FString> ClassExamplePath;
+			for (const FAssetData& AssetData : AssetDataList)
+			{
+				FString ClassName = AssetData.AssetClassPath.GetAssetName().ToString();
+				ClassCounts.FindOrAdd(ClassName)++;
+				if (!ClassExamplePath.Contains(ClassName))
+				{
+					ClassExamplePath.Add(ClassName, AssetData.GetObjectPathString());
+				}
+			}
+
+			TArray<TSharedPtr<FJsonValue>> ClassArray;
+			for (const auto& Pair : ClassCounts)
+			{
+				TSharedRef<FJsonObject> ClassEntry = MakeShared<FJsonObject>();
+				ClassEntry->SetStringField(TEXT("class_name"), Pair.Key);
+				ClassEntry->SetNumberField(TEXT("count"), Pair.Value);
+				if (const FString* Example = ClassExamplePath.Find(Pair.Key))
+				{
+					ClassEntry->SetStringField(TEXT("example_path"), *Example);
+				}
+				ClassArray.Add(MakeShared<FJsonValueObject>(ClassEntry));
+			}
+
+			Data->SetArrayField(TEXT("data_asset_classes"), ClassArray);
+		}
+		else
+		{
+			Data->SetArrayField(TEXT("data_asset_classes"), TArray<TSharedPtr<FJsonValue>>());
+		}
+	}
+
+	// --- StringTables section ---
+	{
+		IAssetRegistry* AssetRegistry = IAssetRegistry::Get();
+		if (AssetRegistry != nullptr)
+		{
+			FARFilter Filter;
+			Filter.ClassPaths.Add(UStringTable::StaticClass()->GetClassPathName());
+			Filter.bRecursiveClasses = true;
+
+			TArray<FAssetData> AssetDataList;
+			AssetRegistry->GetAssets(Filter, AssetDataList);
+
+			TArray<TSharedPtr<FJsonValue>> StringTableArray;
+			for (const FAssetData& AssetData : AssetDataList)
+			{
+				TSharedRef<FJsonObject> Entry = MakeShared<FJsonObject>();
+				Entry->SetStringField(TEXT("name"), AssetData.AssetName.ToString());
+				Entry->SetStringField(TEXT("path"), AssetData.GetObjectPathString());
+
+				// Try to get entry count from the loaded table
+				UStringTable* LoadedTable = LoadObject<UStringTable>(nullptr, *AssetData.GetObjectPathString());
+				if (LoadedTable != nullptr)
+				{
+					FStringTableConstRef TableRef = LoadedTable->GetStringTable();
+					int32 EntryCount = 0;
+					TableRef->EnumerateSourceStrings([&EntryCount](const FString&, const FString&) -> bool
+					{
+						++EntryCount;
+						return true;
+					});
+					Entry->SetNumberField(TEXT("entry_count"), EntryCount);
+				}
+
+				StringTableArray.Add(MakeShared<FJsonValueObject>(Entry));
+			}
+
+			Data->SetArrayField(TEXT("string_tables"), StringTableArray);
+		}
+		else
+		{
+			Data->SetArrayField(TEXT("string_tables"), TArray<TSharedPtr<FJsonValue>>());
+		}
+	}
 
 	return FUDBCommandHandler::Success(Data);
 }
