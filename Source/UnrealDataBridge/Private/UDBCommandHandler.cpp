@@ -113,6 +113,14 @@ FUDBCommandResult FUDBCommandHandler::Execute(const FString& Command, const TSha
 	{
 		return FUDBAssetSearchOps::SearchAssets(Params);
 	}
+	else if (Command == TEXT("resolve_tags"))
+	{
+		return FUDBDataTableOps::ResolveTags(Params);
+	}
+	else if (Command == TEXT("batch"))
+	{
+		return HandleBatch(Params);
+	}
 
 	UE_LOG(LogUDBCommandHandler, Warning, TEXT("Unknown command: %s"), *Command);
 	return Error(UDBErrorCodes::UnknownCommand, FString::Printf(TEXT("Unknown command: %s"), *Command));
@@ -186,6 +194,104 @@ FUDBCommandResult FUDBCommandHandler::HandlePing(const TSharedPtr<FJsonObject>& 
 {
 	TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
 	Data->SetStringField(TEXT("message"), TEXT("pong"));
+	return Success(Data);
+}
+
+FUDBCommandResult FUDBCommandHandler::HandleBatch(const TSharedPtr<FJsonObject>& Params)
+{
+	const TArray<TSharedPtr<FJsonValue>>* CommandsArray = nullptr;
+	if (!Params.IsValid() || !Params->TryGetArrayField(TEXT("commands"), CommandsArray) || CommandsArray == nullptr)
+	{
+		return Error(UDBErrorCodes::InvalidField, TEXT("Missing required param: commands (array)"));
+	}
+
+	if (CommandsArray->Num() > MaxBatchSize)
+	{
+		return Error(
+			UDBErrorCodes::BatchLimitExceeded,
+			FString::Printf(TEXT("Batch size %d exceeds maximum of %d"), CommandsArray->Num(), MaxBatchSize)
+		);
+	}
+
+	const double BatchStartTime = FPlatformTime::Seconds();
+
+	TArray<TSharedPtr<FJsonValue>> ResultsArray;
+
+	for (int32 Index = 0; Index < CommandsArray->Num(); ++Index)
+	{
+		TSharedRef<FJsonObject> EntryResult = MakeShared<FJsonObject>();
+		EntryResult->SetNumberField(TEXT("index"), Index);
+
+		const TSharedPtr<FJsonValue>& CmdVal = (*CommandsArray)[Index];
+		const TSharedPtr<FJsonObject>* CmdObj = nullptr;
+
+		if (!CmdVal.IsValid() || !CmdVal->TryGetObject(CmdObj) || CmdObj == nullptr)
+		{
+			EntryResult->SetStringField(TEXT("command"), TEXT(""));
+			EntryResult->SetBoolField(TEXT("success"), false);
+			EntryResult->SetStringField(TEXT("error_code"), UDBErrorCodes::InvalidField);
+			EntryResult->SetStringField(TEXT("error_message"), TEXT("Invalid command entry (not an object)"));
+			EntryResult->SetNumberField(TEXT("timing_ms"), 0.0);
+			ResultsArray.Add(MakeShared<FJsonValueObject>(EntryResult));
+			continue;
+		}
+
+		FString SubCommand;
+		(*CmdObj)->TryGetStringField(TEXT("command"), SubCommand);
+		EntryResult->SetStringField(TEXT("command"), SubCommand);
+
+		// Block nested batch
+		if (SubCommand == TEXT("batch"))
+		{
+			EntryResult->SetBoolField(TEXT("success"), false);
+			EntryResult->SetStringField(TEXT("error_code"), UDBErrorCodes::BatchRecursionBlocked);
+			EntryResult->SetStringField(TEXT("error_message"), TEXT("Nested batch commands are not allowed"));
+			EntryResult->SetNumberField(TEXT("timing_ms"), 0.0);
+			ResultsArray.Add(MakeShared<FJsonValueObject>(EntryResult));
+			continue;
+		}
+
+		TSharedPtr<FJsonObject> SubParams;
+		const TSharedPtr<FJsonObject>* SubParamsPtr = nullptr;
+		if ((*CmdObj)->TryGetObjectField(TEXT("params"), SubParamsPtr) && SubParamsPtr != nullptr)
+		{
+			SubParams = *SubParamsPtr;
+		}
+		else
+		{
+			SubParams = MakeShared<FJsonObject>();
+		}
+
+		const double CmdStartTime = FPlatformTime::Seconds();
+		FUDBCommandResult SubResult = Execute(SubCommand, SubParams);
+		const double CmdElapsed = (FPlatformTime::Seconds() - CmdStartTime) * 1000.0;
+
+		EntryResult->SetBoolField(TEXT("success"), SubResult.bSuccess);
+		EntryResult->SetNumberField(TEXT("timing_ms"), CmdElapsed);
+
+		if (SubResult.bSuccess)
+		{
+			if (SubResult.Data.IsValid())
+			{
+				EntryResult->SetObjectField(TEXT("data"), SubResult.Data);
+			}
+		}
+		else
+		{
+			EntryResult->SetStringField(TEXT("error_code"), SubResult.ErrorCode);
+			EntryResult->SetStringField(TEXT("error_message"), SubResult.ErrorMessage);
+		}
+
+		ResultsArray.Add(MakeShared<FJsonValueObject>(EntryResult));
+	}
+
+	const double BatchElapsed = (FPlatformTime::Seconds() - BatchStartTime) * 1000.0;
+
+	TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
+	Data->SetArrayField(TEXT("results"), ResultsArray);
+	Data->SetNumberField(TEXT("count"), ResultsArray.Num());
+	Data->SetNumberField(TEXT("total_timing_ms"), BatchElapsed);
+
 	return Success(Data);
 }
 

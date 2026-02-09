@@ -21,6 +21,7 @@ public:
 	static FUDBCommandResult ImportDatatableJson(const TSharedPtr<FJsonObject>& Params);
 	static FUDBCommandResult SearchDatatableContent(const TSharedPtr<FJsonObject>& Params);
 	static FUDBCommandResult GetDataCatalog(const TSharedPtr<FJsonObject>& Params);
+	static FUDBCommandResult ResolveTags(const TSharedPtr<FJsonObject>& Params);
 
 private:
 	/** Load a DataTable by asset path, returns nullptr and sets OutError if not found */

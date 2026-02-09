@@ -83,6 +83,7 @@ def register_datatable_tools(mcp, connection: UEConnection):
     def query_datatable(
         table_path: str,
         row_name_pattern: str = "",
+        row_names: str = "",
         fields: str = "",
         limit: int = 25,
         offset: int = 0,
@@ -99,10 +100,14 @@ def register_datatable_tools(mcp, connection: UEConnection):
             table_path: Full asset path to the DataTable.
             row_name_pattern: Optional wildcard pattern to filter row names (e.g., 'Quest_*', '*_Boss').
                               Uses Unreal wildcard matching (* for any chars, ? for single char).
+            row_names: Optional comma-separated list of exact row names to fetch
+                       (e.g., 'Quest_Tutorial_01,Quest_Build_01'). When provided,
+                       row_name_pattern is ignored. Returns rows in requested order.
+                       Missing names are reported in 'missing_rows'.
             fields: Optional comma-separated list of field names to include in results.
                     Leave empty to include all fields. Example: 'Title,QuestType,Priority'.
-            limit: Maximum number of rows to return (default: 25).
-            offset: Number of rows to skip for pagination (default: 0).
+            limit: Maximum number of rows to return (default: 25). Ignored when row_names is set.
+            offset: Number of rows to skip for pagination (default: 0). Ignored when row_names is set.
 
         Returns:
             JSON with:
@@ -110,6 +115,7 @@ def register_datatable_tools(mcp, connection: UEConnection):
             - total_count: Total matching rows (before pagination)
             - offset: Applied offset
             - limit: Applied limit
+            - missing_rows: (when row_names used) Array of names not found in table
         """
         try:
             params = {
@@ -117,7 +123,9 @@ def register_datatable_tools(mcp, connection: UEConnection):
                 "limit": limit,
                 "offset": offset,
             }
-            if row_name_pattern:
+            if row_names:
+                params["row_names"] = [n.strip() for n in row_names.split(",")]
+            elif row_name_pattern:
                 params["row_name_pattern"] = row_name_pattern
             if fields:
                 params["fields"] = [f.strip() for f in fields.split(",")]
@@ -370,5 +378,66 @@ def register_datatable_tools(mcp, connection: UEConnection):
             return format_response(response.get("data", {}), "import_datatable_json")
         except json.JSONDecodeError as e:
             return f"Error: Invalid JSON in rows: {e}"
+        except ConnectionError as e:
+            return f"Error: {e}"
+
+    @mcp.tool()
+    def batch_query(commands: str) -> str:
+        """Execute multiple data queries in a single round-trip.
+
+        Primary tool for "join" workflows: fetch a quest, then resolve all its
+        referenced patients/jobs/products in one call. Max 20 commands per batch.
+
+        Args:
+            commands: JSON array of command objects, each with 'command' and optional 'params'.
+                      Example: '[{"command": "ping"}, {"command": "get_datatable_row", "params": {"table_path": "/Game/...", "row_name": "Row1"}}]'
+
+        Returns:
+            JSON with:
+            - results: Array of per-command results, each with index, command, success, data/error, timing_ms
+            - count: Number of commands executed
+            - total_timing_ms: Total batch execution time
+        """
+        try:
+            cmds = json.loads(commands)
+            response = connection.send_command("batch", {"commands": cmds})
+            return format_response(response.get("data", {}), "batch_query")
+        except json.JSONDecodeError as e:
+            return f"Error: Invalid JSON in commands: {e}"
+        except ConnectionError as e:
+            return f"Error: {e}"
+
+    @mcp.tool()
+    def resolve_tags(table_path: str, tag_field: str, tags: str, fields: str = "") -> str:
+        """Resolve GameplayTags to DataTable rows containing those tags.
+
+        Use to follow tag references between tables. Example: quest has
+        PatientTags ['Patient.NPC.Maria'] -> resolve against Patient table's
+        PatientTag field to get actual patient data.
+
+        Args:
+            table_path: Full asset path to the target DataTable to search.
+            tag_field: Name of the FGameplayTag or FGameplayTagContainer field to match against.
+            tags: Comma-separated list of GameplayTag strings to resolve
+                  (e.g., 'Patient.NPC.Maria,Patient.NPC.Viktor').
+            fields: Optional comma-separated list of field names to include in results.
+                    Leave empty for all fields. Example: 'PatientName,PatientTag'.
+
+        Returns:
+            JSON with:
+            - resolved: Array of {row_name, row_data, matched_tags} for matching rows
+            - resolved_count: Number of rows that matched
+            - unresolved_tags: Tags that didn't match any row
+        """
+        try:
+            params = {
+                "table_path": table_path,
+                "tag_field": tag_field,
+                "tags": [t.strip() for t in tags.split(",")],
+            }
+            if fields:
+                params["fields"] = [f.strip() for f in fields.split(",")]
+            response = connection.send_command("resolve_tags", params)
+            return format_response(response.get("data", {}), "resolve_tags")
         except ConnectionError as e:
             return f"Error: {e}"

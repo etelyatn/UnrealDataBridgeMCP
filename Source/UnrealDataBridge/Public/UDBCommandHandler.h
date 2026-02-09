@@ -19,6 +19,8 @@ namespace UDBErrorCodes
 	static const FString EditorNotReady = TEXT("EDITOR_NOT_READY");
 	static const FString UnknownCommand = TEXT("UNKNOWN_COMMAND");
 	static const FString CompositeWriteBlocked = TEXT("COMPOSITE_WRITE_BLOCKED");
+	static const FString BatchLimitExceeded = TEXT("BATCH_LIMIT_EXCEEDED");
+	static const FString BatchRecursionBlocked = TEXT("BATCH_RECURSION_BLOCKED");
 }
 
 /** Result of a command execution */
@@ -48,8 +50,11 @@ public:
 	/** Helper to build an error result */
 	static FUDBCommandResult Error(const FString& Code, const FString& Message, TSharedPtr<FJsonObject> Details = nullptr);
 
+	static constexpr int32 MaxBatchSize = 20;
+
 private:
 	// Command implementations
 	FUDBCommandResult HandlePing(const TSharedPtr<FJsonObject>& Params);
 	FUDBCommandResult HandleGetStatus(const TSharedPtr<FJsonObject>& Params);
+	FUDBCommandResult HandleBatch(const TSharedPtr<FJsonObject>& Params);
 };

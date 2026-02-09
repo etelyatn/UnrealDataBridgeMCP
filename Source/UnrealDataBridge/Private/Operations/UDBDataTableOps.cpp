@@ -287,27 +287,66 @@ FUDBCommandResult FUDBDataTableOps::QueryDatatable(const TSharedPtr<FJsonObject>
 		}
 	}
 
-	// Get all row names and apply pattern filter
-	TArray<FName> RowNames = DataTable->GetRowNames();
-
-	TArray<FName> FilteredRowNames;
-	for (const FName& Name : RowNames)
+	// Parse optional row_names (exact match list)
+	TArray<FString> RowNamesList;
+	if (Params.IsValid())
 	{
-		if (!RowNamePattern.IsEmpty())
+		const TArray<TSharedPtr<FJsonValue>>* RowNamesArray = nullptr;
+		if (Params->TryGetArrayField(TEXT("row_names"), RowNamesArray) && RowNamesArray != nullptr)
 		{
-			if (!Name.ToString().MatchesWildcard(RowNamePattern))
+			for (const TSharedPtr<FJsonValue>& NameValue : *RowNamesArray)
 			{
-				continue;
+				FString Name;
+				if (NameValue.IsValid() && NameValue->TryGetString(Name))
+				{
+					RowNamesList.Add(Name);
+				}
 			}
 		}
-		FilteredRowNames.Add(Name);
+	}
+
+	// Filtering
+	TArray<FName> FilteredRowNames;
+	TArray<FString> MissingNames;
+
+	if (RowNamesList.Num() > 0)
+	{
+		// Exact match: preserve requested order, track missing
+		for (const FString& RequestedName : RowNamesList)
+		{
+			FName RowFName(*RequestedName);
+			if (DataTable->FindRowUnchecked(RowFName) != nullptr)
+			{
+				FilteredRowNames.Add(RowFName);
+			}
+			else
+			{
+				MissingNames.Add(RequestedName);
+			}
+		}
+	}
+	else
+	{
+		// Wildcard pattern filtering
+		TArray<FName> RowNames = DataTable->GetRowNames();
+		for (const FName& Name : RowNames)
+		{
+			if (!RowNamePattern.IsEmpty())
+			{
+				if (!Name.ToString().MatchesWildcard(RowNamePattern))
+				{
+					continue;
+				}
+			}
+			FilteredRowNames.Add(Name);
+		}
 	}
 
 	const int32 TotalCount = FilteredRowNames.Num();
 
-	// Apply pagination
-	const int32 StartIndex = FMath::Min(Offset, TotalCount);
-	const int32 EndIndex = FMath::Min(StartIndex + Limit, TotalCount);
+	// Apply pagination (skip for row_names mode — return all matched)
+	const int32 StartIndex = (RowNamesList.Num() > 0) ? 0 : FMath::Min(Offset, TotalCount);
+	const int32 EndIndex = (RowNamesList.Num() > 0) ? TotalCount : FMath::Min(StartIndex + Limit, TotalCount);
 
 	TArray<TSharedPtr<FJsonValue>> RowsArray;
 	for (int32 Index = StartIndex; Index < EndIndex; ++Index)
@@ -334,6 +373,16 @@ FUDBCommandResult FUDBDataTableOps::QueryDatatable(const TSharedPtr<FJsonObject>
 	Data->SetNumberField(TEXT("total_count"), TotalCount);
 	Data->SetNumberField(TEXT("offset"), Offset);
 	Data->SetNumberField(TEXT("limit"), Limit);
+
+	if (MissingNames.Num() > 0)
+	{
+		TArray<TSharedPtr<FJsonValue>> MissingArray;
+		for (const FString& Missing : MissingNames)
+		{
+			MissingArray.Add(MakeShared<FJsonValueString>(Missing));
+		}
+		Data->SetArrayField(TEXT("missing_rows"), MissingArray);
+	}
 
 	return FUDBCommandHandler::Success(Data);
 }
@@ -1388,6 +1437,185 @@ FUDBCommandResult FUDBDataTableOps::GetDataCatalog(const TSharedPtr<FJsonObject>
 			Data->SetArrayField(TEXT("string_tables"), TArray<TSharedPtr<FJsonValue>>());
 		}
 	}
+
+	return FUDBCommandHandler::Success(Data);
+}
+
+FUDBCommandResult FUDBDataTableOps::ResolveTags(const TSharedPtr<FJsonObject>& Params)
+{
+	FString TablePath;
+	if (!Params.IsValid() || !Params->TryGetStringField(TEXT("table_path"), TablePath))
+	{
+		return FUDBCommandHandler::Error(
+			UDBErrorCodes::InvalidField,
+			TEXT("Missing required param: table_path")
+		);
+	}
+
+	FString TagFieldName;
+	if (!Params->TryGetStringField(TEXT("tag_field"), TagFieldName))
+	{
+		return FUDBCommandHandler::Error(
+			UDBErrorCodes::InvalidField,
+			TEXT("Missing required param: tag_field")
+		);
+	}
+
+	const TArray<TSharedPtr<FJsonValue>>* TagsArray = nullptr;
+	if (!Params->TryGetArrayField(TEXT("tags"), TagsArray) || TagsArray == nullptr || TagsArray->Num() == 0)
+	{
+		return FUDBCommandHandler::Error(
+			UDBErrorCodes::InvalidField,
+			TEXT("Missing or empty required param: tags (array)")
+		);
+	}
+
+	FUDBCommandResult LoadError;
+	UDataTable* DataTable = LoadDataTable(TablePath, LoadError);
+	if (DataTable == nullptr)
+	{
+		return LoadError;
+	}
+
+	const UScriptStruct* RowStruct = DataTable->GetRowStruct();
+	if (RowStruct == nullptr)
+	{
+		return FUDBCommandHandler::Error(
+			UDBErrorCodes::InvalidStructType,
+			FString::Printf(TEXT("DataTable has no row struct: %s"), *TablePath)
+		);
+	}
+
+	// Find the tag field property
+	const FProperty* TagProperty = RowStruct->FindPropertyByName(FName(*TagFieldName));
+	if (TagProperty == nullptr)
+	{
+		return FUDBCommandHandler::Error(
+			UDBErrorCodes::InvalidField,
+			FString::Printf(TEXT("Field '%s' not found in row struct"), *TagFieldName)
+		);
+	}
+
+	// Validate it's a GameplayTag or GameplayTagContainer
+	const FStructProperty* StructProp = CastField<FStructProperty>(TagProperty);
+	bool bIsGameplayTag = false;
+	bool bIsGameplayTagContainer = false;
+	if (StructProp != nullptr)
+	{
+		bIsGameplayTag = (StructProp->Struct == FGameplayTag::StaticStruct());
+		bIsGameplayTagContainer = (StructProp->Struct == FGameplayTagContainer::StaticStruct());
+	}
+
+	if (!bIsGameplayTag && !bIsGameplayTagContainer)
+	{
+		return FUDBCommandHandler::Error(
+			UDBErrorCodes::InvalidField,
+			FString::Printf(TEXT("Field '%s' is not FGameplayTag or FGameplayTagContainer"), *TagFieldName)
+		);
+	}
+
+	// Parse requested tags into a set
+	TSet<FString> RequestedTags;
+	for (const TSharedPtr<FJsonValue>& TagValue : *TagsArray)
+	{
+		FString TagString;
+		if (TagValue.IsValid() && TagValue->TryGetString(TagString))
+		{
+			RequestedTags.Add(TagString);
+		}
+	}
+
+	// Parse optional fields projection
+	TSet<FString> FieldsProjection;
+	const TArray<TSharedPtr<FJsonValue>>* FieldsArray = nullptr;
+	if (Params->TryGetArrayField(TEXT("fields"), FieldsArray) && FieldsArray != nullptr)
+	{
+		for (const TSharedPtr<FJsonValue>& FieldValue : *FieldsArray)
+		{
+			FString FieldName;
+			if (FieldValue.IsValid() && FieldValue->TryGetString(FieldName))
+			{
+				FieldsProjection.Add(FieldName);
+			}
+		}
+	}
+
+	// Scan all rows
+	TSet<FString> ResolvedTags;
+	TArray<TSharedPtr<FJsonValue>> ResolvedArray;
+
+	TArray<FName> RowNames = DataTable->GetRowNames();
+	for (const FName& RowName : RowNames)
+	{
+		const uint8* RowData = DataTable->FindRowUnchecked(RowName);
+		if (RowData == nullptr)
+		{
+			continue;
+		}
+
+		const void* FieldPtr = TagProperty->ContainerPtrToValuePtr<void>(RowData);
+		TArray<FString> MatchedTags;
+
+		if (bIsGameplayTag)
+		{
+			const FGameplayTag* Tag = static_cast<const FGameplayTag*>(FieldPtr);
+			if (Tag->IsValid() && RequestedTags.Contains(Tag->ToString()))
+			{
+				MatchedTags.Add(Tag->ToString());
+			}
+		}
+		else if (bIsGameplayTagContainer)
+		{
+			const FGameplayTagContainer* Container = static_cast<const FGameplayTagContainer*>(FieldPtr);
+			for (const FGameplayTag& Tag : *Container)
+			{
+				if (Tag.IsValid() && RequestedTags.Contains(Tag.ToString()))
+				{
+					MatchedTags.Add(Tag.ToString());
+				}
+			}
+		}
+
+		if (MatchedTags.Num() == 0)
+		{
+			continue;
+		}
+
+		for (const FString& Tag : MatchedTags)
+		{
+			ResolvedTags.Add(Tag);
+		}
+
+		TSharedRef<FJsonObject> EntryJson = MakeShared<FJsonObject>();
+		EntryJson->SetStringField(TEXT("row_name"), RowName.ToString());
+		EntryJson->SetObjectField(TEXT("row_data"), FUDBSerializer::StructToJson(RowStruct, RowData, FieldsProjection));
+
+		TArray<TSharedPtr<FJsonValue>> MatchedTagsArray;
+		for (const FString& Tag : MatchedTags)
+		{
+			MatchedTagsArray.Add(MakeShared<FJsonValueString>(Tag));
+		}
+		EntryJson->SetArrayField(TEXT("matched_tags"), MatchedTagsArray);
+
+		ResolvedArray.Add(MakeShared<FJsonValueObject>(EntryJson));
+	}
+
+	// Compute unresolved tags
+	TArray<TSharedPtr<FJsonValue>> UnresolvedArray;
+	for (const FString& Tag : RequestedTags)
+	{
+		if (!ResolvedTags.Contains(Tag))
+		{
+			UnresolvedArray.Add(MakeShared<FJsonValueString>(Tag));
+		}
+	}
+
+	TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
+	Data->SetStringField(TEXT("table_path"), TablePath);
+	Data->SetStringField(TEXT("tag_field"), TagFieldName);
+	Data->SetArrayField(TEXT("resolved"), ResolvedArray);
+	Data->SetNumberField(TEXT("resolved_count"), ResolvedArray.Num());
+	Data->SetArrayField(TEXT("unresolved_tags"), UnresolvedArray);
 
 	return FUDBCommandHandler::Success(Data);
 }

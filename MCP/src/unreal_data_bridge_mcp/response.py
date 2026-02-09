@@ -30,7 +30,7 @@ def format_response(data: dict, tool_name: str) -> str:
     # Find a truncatable array key
     truncatable_keys = [
         "rows", "results", "tags", "datatables", "data_assets",
-        "string_tables", "assets", "entries",
+        "string_tables", "assets", "entries", "resolved",
     ]
     array_key = None
     for key in truncatable_keys:
