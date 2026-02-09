@@ -152,13 +152,32 @@ Open **Project Settings > Plugins > Unreal Data Bridge** in the Unreal Editor:
 | `UDB_PORT` | `8742` | TCP port to connect to |
 | `UDB_LOG_LEVEL` | `INFO` | Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
 
-## Available Tools (21)
+## Response Caching
 
-### Status
+The Python MCP server includes an in-memory TTL cache that reduces redundant TCP round-trips for stable data. Schemas, table lists, and catalog data are cached automatically.
+
+| Category | TTL | Cached Commands |
+|----------|-----|-----------------|
+| Schemas | 30 min | `get_datatable_schema`, `get_struct_schema` |
+| Catalog | 10 min | `get_data_catalog` |
+| Lists | 5 min | `list_datatables`, `list_gameplay_tags`, `list_data_assets`, `list_string_tables` |
+| Search | 2 min | `search_assets` |
+| Row data | none | `get_datatable_row`, `query_datatable`, `search_datatable_content` |
+| Writes | none | All write operations |
+
+**Automatic invalidation:** Write operations (add/delete rows, register tags) invalidate related list and catalog caches. Reconnecting to the editor (after restart or recompile) clears all caches.
+
+**Manual refresh:** Call `refresh_cache` to clear all cached data when you know something changed outside of MCP tools.
+
+## Available Tools (23)
+
+### Status & Discovery
 
 | Tool | Description |
 |------|-------------|
 | `get_status` | Check connection to Unreal Editor and get plugin version, engine version, project name |
+| `get_data_catalog` | **Call this first.** Returns a compact overview of all DataTables, tag prefixes, DataAsset classes, and StringTables in one call |
+| `refresh_cache` | Clear all cached MCP responses and force fresh reads from Unreal Editor |
 
 ### DataTables (9)
 
@@ -226,7 +245,8 @@ Plugins/UnrealDataBridge/
     src/
       unreal_data_bridge_mcp/
         server.py               # FastMCP server, tool registration
-        tcp_client.py           # TCP connection to UE plugin
+        tcp_client.py           # TCP connection to UE plugin + response caching
+        cache.py                # In-memory TTL response cache
         tools/
           datatables.py         # DataTable tools
           gameplay_tags.py      # GameplayTag tools

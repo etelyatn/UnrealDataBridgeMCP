@@ -7,12 +7,16 @@ Add new data entries to Unreal Engine.
 
 ## Implementation Steps
 
-1. **Parse target type:**
+1. **Call `get_data_catalog` first** to discover available tables and their structure.
+   Use the catalog's `top_fields` to understand row structure before calling `get_datatable_schema`.
+
+2. **Parse target type:**
    - `row to table X named Y with {...}` → DataTable row
    - `tag X [with comment]` → GameplayTag
 
-2. **For table rows:**
-   - Load and call `mcp__unreal-data-bridge__get_datatable_schema` to get structure
+3. **For table rows:**
+   - Use catalog to identify the target table (avoid `list_datatables` separately)
+   - Call `get_datatable_schema` only if you need full type details beyond `top_fields`
    - Parse row data:
      - JSON format: `{"Field": "Value", "Number": 42}`
      - Natural language: `Name is "Item" and Damage is 50`
@@ -20,14 +24,14 @@ Add new data entries to Unreal Engine.
      - Check all required fields present
      - Validate data types
      - Check value ranges/constraints
-   - Load and call `mcp__unreal-data-bridge__add_datatable_row` with validated data
+   - Call `add_datatable_row` with validated data
 
-3. **For GameplayTags:**
+4. **For GameplayTags:**
    - Validate tag format (hierarchical dot notation)
-   - Check tag doesn't already exist with `mcp__unreal-data-bridge__validate_gameplay_tag`
-   - Load and call `mcp__unreal-data-bridge__register_gameplay_tag` with tag and comment
+   - Check tag doesn't already exist with `validate_gameplay_tag`
+   - Call `register_gameplay_tag` with tag and comment
 
-4. **Confirm creation:**
+5. **Confirm creation:**
    - Show what was created
    - Report success or errors
    - For rows, show how to query: `/unreal-data get table X row Y`

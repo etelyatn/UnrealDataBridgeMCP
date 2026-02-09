@@ -7,12 +7,15 @@ Update data using natural language descriptions.
 
 ## Implementation Steps
 
-1. **Parse target type:**
+1. **Call `get_data_catalog` first** to discover available tables and assets.
+   Use the catalog's `top_fields` and `data_asset_classes` to identify targets.
+
+2. **Parse target type:**
    - `table X row Y set Field to Value` → DataTable row update
    - `asset /Path/To/Asset set Property to Value` → DataAsset update
 
-2. **For table rows:**
-   - Load and call `mcp__unreal-data-bridge__get_datatable_row` to get current data
+3. **For table rows:**
+   - Call `get_datatable_row` to get current data
    - Parse field changes:
      - `set Field to Value` → direct assignment
      - `increase Field by N` → add N to current value
@@ -20,14 +23,14 @@ Update data using natural language descriptions.
      - `decrease Field by N` → subtract N from current value
      - `decrease Field by N%` → multiply by (1 - N/100)
    - Calculate new values based on current data
-   - Load and call `mcp__unreal-data-bridge__update_datatable_row` with updated row
+   - Call `update_datatable_row` with updated row
 
-3. **For data assets:**
-   - Load and call `mcp__unreal-data-bridge__get_data_asset` to get current properties
+4. **For data assets:**
+   - Call `get_data_asset` to get current properties
    - Parse property changes (similar to table fields)
-   - Load and call `mcp__unreal-data-bridge__update_data_asset` with updated properties
+   - Call `update_data_asset` with updated properties
 
-4. **Confirm changes:**
+5. **Confirm changes:**
    - Show before/after values
    - Ask user to confirm before applying
    - Report success or errors
