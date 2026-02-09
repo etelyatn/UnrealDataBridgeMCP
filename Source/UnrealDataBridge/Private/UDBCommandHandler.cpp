@@ -6,6 +6,9 @@
 #include "Operations/UDBDataAssetOps.h"
 #include "Operations/UDBLocalizationOps.h"
 #include "Operations/UDBAssetSearchOps.h"
+#include "Misc/EngineVersion.h"
+#include "Misc/App.h"
+#include "AssetRegistry/IAssetRegistry.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Serialization/JsonWriter.h"
@@ -182,7 +185,21 @@ FUDBCommandResult FUDBCommandHandler::HandlePing(const TSharedPtr<FJsonObject>& 
 FUDBCommandResult FUDBCommandHandler::HandleGetStatus(const TSharedPtr<FJsonObject>& Params)
 {
 	TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
-	Data->SetStringField(TEXT("status"), TEXT("ready"));
-	Data->SetStringField(TEXT("editor"), TEXT("UnrealEditor"));
+	Data->SetBoolField(TEXT("connected"), true);
+	Data->SetStringField(TEXT("plugin_version"), TEXT("0.1.0"));
+
+	// Engine version
+	Data->SetStringField(TEXT("engine_version"), FEngineVersion::Current().ToString());
+
+	// Project name
+	Data->SetStringField(TEXT("project_name"), FApp::GetProjectName());
+
+	// Subsystem availability
+	TSharedPtr<FJsonObject> Subsystems = MakeShared<FJsonObject>();
+	Subsystems->SetBoolField(TEXT("asset_registry"), IAssetRegistry::Get() != nullptr);
+	Subsystems->SetBoolField(TEXT("gameplay_tags"), true);
+	Subsystems->SetBoolField(TEXT("localization"), true);
+	Data->SetObjectField(TEXT("subsystems"), Subsystems);
+
 	return Success(Data);
 }
