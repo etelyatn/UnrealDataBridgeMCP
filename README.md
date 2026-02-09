@@ -66,6 +66,28 @@ Add the MCP server to your Claude Code config (`.mcp.json` in your project root,
 
 With the editor running, call `get_status` from your AI tool. It should return the plugin version, engine version, and project name.
 
+## Claude Code Commands (Optional)
+
+For a more ergonomic interface, install the Claude Code commands from `ClaudeCommands/`:
+
+```bash
+# Symlink (development)
+cd YourProject/.claude/commands
+ln -s ../../Plugins/UnrealDataBridge/ClaudeCommands/*.md .
+
+# Or copy files
+cp Plugins/UnrealDataBridge/ClaudeCommands/*.md .claude/commands/
+```
+
+See [ClaudeCommands/README.md](ClaudeCommands/README.md) for usage examples.
+
+**Available commands:**
+- `/unreal-data` - Natural language data queries
+- `/data-search` - Search tables, assets, tags
+- `/data-update` - Modify data with smart parsing
+- `/data-add` - Add rows or register tags
+- `/data-remove` - Delete rows
+
 ## Plugin Installation
 
 The editor plugin module loads at `PostEngineInit` phase and starts a TCP server on localhost. It is an editor-only module -- it does not ship with cooked builds.
