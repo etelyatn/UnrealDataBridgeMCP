@@ -4,7 +4,7 @@ Bridge AI tools to Unreal Engine's data systems via the Model Context Protocol.
 
 | | |
 |---|---|
-| **Version** | 0.1.0 (beta) |
+| **Version** | 0.2.0 (beta) |
 | **License** | MIT |
 | **Engine** | Unreal Engine 5.5+ |
 | **Python** | 3.10+ |
@@ -160,7 +160,7 @@ The Python MCP server includes an in-memory TTL cache that reduces redundant TCP
 |----------|-----|-----------------|
 | Schemas | 30 min | `get_datatable_schema`, `get_struct_schema` |
 | Catalog | 10 min | `get_data_catalog` |
-| Lists | 5 min | `list_datatables`, `list_gameplay_tags`, `list_data_assets`, `list_string_tables` |
+| Lists | 5 min | `list_datatables`, `list_gameplay_tags`, `list_data_assets`, `list_string_tables`, `list_curve_tables` |
 | Search | 2 min | `search_assets` |
 | Row data | none | `get_datatable_row`, `query_datatable`, `search_datatable_content` |
 | Writes | none | All write operations |
@@ -169,7 +169,15 @@ The Python MCP server includes an in-memory TTL cache that reduces redundant TCP
 
 **Manual refresh:** Call `refresh_cache` to clear all cached data when you know something changed outside of MCP tools.
 
-## Available Tools (23)
+## Editor Integration
+
+All write operations include full editor integration out of the box:
+
+- **Undo/Redo** -- Every write operation (add/update/delete row, update asset, register tag, set translation, update curve) is wrapped in an `FScopedTransaction`. Use **Edit > Undo** in the editor to revert any change made via MCP.
+- **Editor Notifications** -- After writes, the plugin broadcasts `PostEditChange` events so editor UI (property panels, asset browsers, DataTable viewers) refreshes automatically.
+- **Dry-Run Preview** -- `update_datatable_row` and `update_data_asset` accept a `dry_run` parameter. When `true`, returns a diff of `{field, old_value, new_value}` for each change without modifying the actual asset.
+
+## Available Tools (26)
 
 ### Status & Discovery
 
@@ -189,15 +197,23 @@ The Python MCP server includes an in-memory TTL cache that reduces redundant TCP
 | `get_datatable_row` | Get a specific row by row name |
 | `get_struct_schema` | Get schema for any UStruct type by name |
 | `add_datatable_row` | Add a new row to a DataTable |
-| `update_datatable_row` | Update an existing row (partial update, unspecified fields unchanged) |
+| `update_datatable_row` | Update an existing row (partial update). Supports `dry_run` for diff preview |
 | `delete_datatable_row` | Delete a row from a DataTable |
 | `import_datatable_json` | Bulk import rows with create/upsert/replace modes and dry-run support |
+
+### CurveTables (3)
+
+| Tool | Description |
+|------|-------------|
+| `list_curve_tables` | List all loaded CurveTables with name, path, row count, and curve type (RichCurve/SimpleCurve) |
+| `get_curve_table` | Get curve data with all keys (time/value pairs), optional row filtering. Includes interp mode for RichCurve keys |
+| `update_curve_table_row` | Replace keys on an existing curve row with new time/value pairs |
 
 ### GameplayTags (4)
 
 | Tool | Description |
 |------|-------------|
-| `list_gameplay_tags` | List registered tags, optionally filtered by prefix |
+| `list_gameplay_tags` | List registered tags with source `.ini` file, parent tags, and child tags. Optionally filtered by prefix |
 | `validate_gameplay_tag` | Check if a specific tag is registered |
 | `register_gameplay_tag` | Register a new tag, writing to the appropriate `.ini` file |
 | `register_gameplay_tags` | Batch register multiple tags in one call |
@@ -208,7 +224,7 @@ The Python MCP server includes an in-memory TTL cache that reduces redundant TCP
 |------|-------------|
 | `list_data_assets` | List DataAssets filtered by class or path |
 | `get_data_asset` | Read all properties of a DataAsset |
-| `update_data_asset` | Update properties on a DataAsset (partial update) |
+| `update_data_asset` | Update properties on a DataAsset (partial update). Supports `dry_run` for diff preview |
 
 ### Localization (3)
 
@@ -235,11 +251,19 @@ Plugins/UnrealDataBridge/
         UDBTcpServer.h          # TCP server, handles connections
         UDBCommandHandler.h     # Routes commands to operations
         UDBSerializer.h         # UStruct <-> JSON serialization
+        UDBEditorUtils.h        # Editor notifications (PostEditChange)
         UDBSettings.h           # Developer settings (port, etc.)
       Private/
         Operations/             # One file per command group
+          UDBDataTableOps.cpp
+          UDBDataAssetOps.cpp
+          UDBCurveTableOps.cpp  # CurveTable read/write
+          UDBGameplayTagOps.cpp
+          UDBLocalizationOps.cpp
+          ...
+        UDBEditorUtils.cpp
         ...
-    UnrealDataBridgeTests/      # Automation tests
+    UnrealDataBridgeTests/      # Automation tests (19 tests)
   MCP/
     pyproject.toml              # Python package definition
     src/
@@ -249,6 +273,7 @@ Plugins/UnrealDataBridge/
         cache.py                # In-memory TTL response cache
         tools/
           datatables.py         # DataTable tools
+          curve_tables.py       # CurveTable tools
           gameplay_tags.py      # GameplayTag tools
           data_assets.py        # DataAsset tools
           localization.py       # StringTable/localization tools
