@@ -2,6 +2,7 @@
 
 #include "UDBTcpServer.h"
 #include "UDBCommandHandler.h"
+#include "UDBSettings.h"
 #include "Common/TcpListener.h"
 #include "SocketSubsystem.h"
 #include "Sockets.h"
@@ -9,6 +10,7 @@
 #include "Dom/JsonObject.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
+#include "Serialization/JsonWriter.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogUDBTcpServer, Log, All);
 
@@ -206,6 +208,25 @@ bool FUDBTcpServer::ProcessSingleClient(FSocket* InClientSocket)
 			Params = *ParamsPtr;
 		}
 
+		// Verbose logging: log incoming command
+		const bool bLogCommands = UUDBSettings::Get()->bLogCommands;
+		if (bLogCommands)
+		{
+			FString ParamsString;
+			if (Params.IsValid())
+			{
+				TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+					TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&ParamsString);
+				FJsonSerializer::Serialize(Params.ToSharedRef(), Writer);
+			}
+			constexpr int32 MaxParamsLength = 200;
+			if (ParamsString.Len() > MaxParamsLength)
+			{
+				ParamsString = ParamsString.Left(MaxParamsLength) + TEXT("...");
+			}
+			UE_LOG(LogUDBTcpServer, Log, TEXT("[UDB] <- %s %s"), *Command, *ParamsString);
+		}
+
 		// Execute command with timing
 		const double StartTime = FPlatformTime::Seconds();
 		FUDBCommandResult Result = CommandHandler.Execute(Command, Params);
@@ -216,6 +237,40 @@ bool FUDBTcpServer::ProcessSingleClient(FSocket* InClientSocket)
 		if (TimingSeconds > CommandTimeoutWarningSeconds)
 		{
 			UE_LOG(LogUDBTcpServer, Warning, TEXT("Command '%s' took %.1fs (threshold: %.0fs)"), *Command, TimingSeconds, CommandTimeoutWarningSeconds);
+		}
+
+		// Verbose logging: log command result
+		if (bLogCommands)
+		{
+			if (Result.bSuccess)
+			{
+				// Try to find a countable array in the result data
+				int32 ResultCount = -1;
+				if (Result.Data.IsValid())
+				{
+					for (const auto& Pair : Result.Data->Values)
+					{
+						if (Pair.Value.IsValid() && Pair.Value->Type == EJson::Array)
+						{
+							ResultCount = Pair.Value->AsArray().Num();
+							break;
+						}
+					}
+				}
+
+				if (ResultCount >= 0)
+				{
+					UE_LOG(LogUDBTcpServer, Log, TEXT("[UDB] -> SUCCESS (%.1fms, %d results)"), TimingMs, ResultCount);
+				}
+				else
+				{
+					UE_LOG(LogUDBTcpServer, Log, TEXT("[UDB] -> SUCCESS (%.1fms)"), TimingMs);
+				}
+			}
+			else
+			{
+				UE_LOG(LogUDBTcpServer, Log, TEXT("[UDB] -> ERROR %s (%.1fms)"), *Result.ErrorCode, TimingMs);
+			}
 		}
 
 		SendResponse(InClientSocket, FUDBCommandHandler::ResultToJson(Result, TimingMs));
