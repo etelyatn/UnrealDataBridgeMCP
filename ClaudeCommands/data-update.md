@@ -15,7 +15,8 @@ Update data using natural language descriptions.
    - `asset /Path/To/Asset set Property to Value` → DataAsset update
 
 3. **For table rows:**
-   - Call `get_datatable_row` to get current data
+   - For a single row: call `get_datatable_row` to get current data
+   - For multiple rows: call `query_datatable` with `row_names` to fetch all at once
    - Parse field changes:
      - `set Field to Value` → direct assignment
      - `increase Field by N` → add N to current value
@@ -24,6 +25,8 @@ Update data using natural language descriptions.
      - `decrease Field by N%` → multiply by (1 - N/100)
    - Calculate new values based on current data
    - Call `update_datatable_row` with updated row
+   - For multiple updates, use `batch_query` to combine all `update_datatable_row`
+     calls into one round-trip
 
 4. **For data assets:**
    - Call `get_data_asset` to get current properties

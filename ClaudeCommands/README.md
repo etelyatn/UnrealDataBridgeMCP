@@ -110,11 +110,21 @@ cp Plugins/UnrealDataBridge/ClaudeCommands/*.md .claude/commands/
 
 ### Batch Operations
 
-Update multiple rows by combining commands:
+Fetch multiple specific rows in one call:
 ```
-/data-update table DT_Items row Sword_01 increase Damage by 10%
-/data-update table DT_Items row Sword_02 increase Damage by 10%
-/data-update table DT_Items row Sword_03 increase Damage by 10%
+/data-search rows Quest_Tutorial_01, Quest_Build_01 from quests with fields Title,QuestType
+```
+
+Use `batch_query` to combine multiple operations in one round-trip:
+```
+/unreal-data batch: get quest row, then resolve its patient and product tags
+```
+
+### Cross-Table Lookups (Tag Resolution)
+
+Resolve GameplayTags across tables (e.g., quest → patients):
+```
+/data-search resolve tags Patient.NPC.Maria,Patient.NPC.Viktor against patient table
 ```
 
 ### Schema Inspection

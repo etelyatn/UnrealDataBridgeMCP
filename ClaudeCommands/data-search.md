@@ -20,15 +20,20 @@ Only call `get_data_catalog` if you genuinely don't know what tables/assets exis
 2. **Identify search target type:**
    - Content in DataTables → `search_datatable_content` on the appropriate table
    - Rows by name pattern → `query_datatable` with `row_name_pattern`
+   - Specific rows by name → `query_datatable` with `row_names` (comma-separated)
+   - Rows by GameplayTag → `resolve_tags` against the target table's tag field
    - Assets by name → `search_assets`
    - Tags by prefix → `list_gameplay_tags`
 
 3. **Use `fields` param** to keep responses small — only request fields you need.
 
-4. **Load and call appropriate MCP tool:**
+4. **For multi-step lookups**, use `batch_query` to combine commands in one call.
+   Example: search a quest table, then resolve its patient tags against the patient table.
+
+5. **Load and call appropriate MCP tool:**
    - Use `ToolSearch` to load deferred tools before calling
 
-5. **Format results:**
+6. **Format results:**
    - Tables: Name, Path, Row Count
    - Assets: Name, Class, Path
    - Tags: Tag Name, Comment
@@ -42,6 +47,8 @@ Only call `get_data_catalog` if you genuinely don't know what tables/assets exis
 /data-search assets Weapon
 /data-search tags Item.
 /data-search find "Punk Is Dead" in quests
+/data-search rows Quest_Tutorial_01, Quest_Build_01 from quests with fields Title,QuestType
+/data-search resolve tags Patient.NPC.Maria,Patient.NPC.Viktor against patient table
 ```
 
 ## Notes

@@ -26,18 +26,30 @@ Only call discovery tools when you genuinely don't know what exists:
 2. **Map to MCP tool calls:**
    - "find/search [text] in [table]" → `search_datatable_content`
    - "get table X row Y" → `get_datatable_row`
+   - "get rows A, B, C from table X" → `query_datatable` with `row_names`
    - "list tables [path]" → `list_datatables`
    - "show schema for table X" → `get_datatable_schema`
    - "search assets [query]" → `search_assets`
    - "list tags [prefix]" → `list_gameplay_tags`
+   - "resolve tags against table" → `resolve_tags`
 
 3. **Use `fields` param** on `query_datatable` to select only needed fields.
    This skips serialization of heavy nested data and keeps responses small.
 
-4. **Load tools before calling:**
+   **Use `row_names` param** on `query_datatable` to fetch specific rows by name
+   in one call instead of multiple `get_datatable_row` calls.
+
+4. **For cross-table lookups**, use `batch_query` to combine multiple commands
+   in one round-trip. Example: fetch a quest row, then resolve its patient tags
+   and product tags in one batch call.
+
+5. **For tag-based joins**, use `resolve_tags` to find rows in a target table
+   whose GameplayTag field matches given tags. This replaces manual iteration.
+
+6. **Load tools before calling:**
    - Use `ToolSearch` to load any deferred MCP tools before using them
 
-5. **Format the response** for readability:
+7. **Format the response** for readability:
    - Use tables for structured data
    - Use lists for collections
    - Highlight important values

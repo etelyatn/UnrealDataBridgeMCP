@@ -20,14 +20,19 @@ Remove data entries from Unreal Engine DataTables.
    - Ask user to confirm deletion
    - Call `delete_datatable_row`
 
-4. **For pattern matching:**
+4. **For multiple specific rows:**
+   - Call `query_datatable` with `row_names` to fetch all target rows at once
+   - Show row data for confirmation
+   - Use `batch_query` to combine all `delete_datatable_row` calls into one round-trip
+
+5. **For pattern matching:**
    - Call `query_datatable` with pattern and `fields` to keep response small
    - List matching row names
    - Show count of rows to be deleted
    - Ask user to confirm deletion
-   - Call `delete_datatable_row` for each row
+   - Use `batch_query` to combine all `delete_datatable_row` calls into one round-trip
 
-5. **Confirm deletion:**
+6. **Confirm deletion:**
    - Report how many rows were deleted
    - List deleted row names
    - Report any errors
